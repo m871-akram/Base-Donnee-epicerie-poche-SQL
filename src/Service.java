@@ -188,24 +188,58 @@ public class Service {
      * de 'En preparation' à 'Livrée'.
      */
     public void cloturerCommande(int idCommande) throws Exception {
-        try {
-            // 1. Verrouiller la commande et vérifier le statut (SELECT... FOR UPDATE)
-            String statut = dao.getStatutEtVerrouillerCommande(idCommande);
-            
-            if (!"En preparation".equals(statut)) {
-                throw new Exception("La commande ID " + idCommande + " est déjà " + statut + ".");
-            }
-            
-            // 2. Mettre à jour le statut de la commande à "Livree"
-            dao.updateStatutCommande(idCommande, "Livree");
+    
+    // La transaction est gérée par le Service
+    db.setAutoCommit(false); 
 
-            // 3. Valider la transaction (COMMIT)
-            db.commit();
-
-        } catch (Exception e) {
-            // Annuler la transaction (ROLLBACK)
-            db.rollback();
-            throw new Exception("Échec de la clôture de la commande ID " + idCommande + " : " + e.getMessage());
+    try {
+        // 1. Verrouiller la commande et vérifier le statut
+        String statutActuel = dao.getStatutEtVerrouillerCommande(idCommande);
+        
+        if (!"En preparation".equals(statutActuel)) {
+            throw new Exception("La commande ID " + idCommande + " est déjà " + statutActuel + ". Ne peut être clôturée.");
         }
+        
+        // 2. Récupérer les modes de récupération et de paiement
+        String[] modes = dao.getModeRecupAndPaiement(idCommande);
+        String modeRecuperation = modes[0];
+        String modePaiement = modes[1];
+        String statutFinal;
+
+        // 3. Logique métier F3
+        if ("Retrait".equals(modeRecuperation)) {
+            statutFinal = "Recupere";
+            
+            if ("EN BOUTIQUE".equals(modePaiement)) {
+                 // Étape Paiement en boutique : Si un enregistrement est nécessaire
+                 // dao.enregistrerPaiement(idCommande, /* autres infos */);
+                 System.out.println("Paiement EN BOUTIQUE enregistré.");
+            }
+        
+        } else if ("Livraison".equals(modeRecuperation)) {
+            statutFinal = "Livree";
+            // Étape Frais de livraison : Affichage ou calcul final
+            System.out.println("Calcul des frais de livraison finaux : 5.0 € (fixes)."); 
+        } else {
+            throw new Exception("Mode de récupération non pris en charge.");
+        }
+        
+        // 4. Mettre à jour la date effective de récupération/livraison
+        dao.enregistrerDateRecup(idCommande, modeRecuperation);
+
+        // 5. Mettre à jour le statut final
+        dao.updateStatutCommande(idCommande, statutFinal);
+
+        // 6. Valider la transaction
+        db.commit();
+        System.out.println("✅ Clôture de la commande " + idCommande + " réussie. Nouveau statut : " + statutFinal);
+
+    } catch (Exception e) {
+        // En cas d'erreur, annuler tout
+        db.rollback();
+        throw new Exception("Échec de la clôture de la commande ID " + idCommande + " : " + e.getMessage());
+    } finally {
+        db.setAutoCommit(true); // Rétablir l'auto-commit
     }
+}
 }

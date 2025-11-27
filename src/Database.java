@@ -34,7 +34,11 @@ public class Database {
     }
     // ----------------------------------------------------------------------
 
-
+    public void setAutoCommit(boolean autoCommit) throws SQLException {
+        if (this.con != null) {
+            this.con.setAutoCommit(autoCommit);
+        }
+    }
     public void commit() throws SQLException {
         con.commit();
     }

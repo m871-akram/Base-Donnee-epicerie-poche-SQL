@@ -320,7 +320,84 @@ public class Dao {
         }
         return statut;
     }
+    /**
+     * Récupère le mode de récupération ('Retrait' ou 'Livraison') et le mode de paiement.
+     * @return Un tableau de String {modeRecuperation, modePaiement}.
+     */
+    public String[] getModeRecupAndPaiement(int idCommande) throws SQLException {
+    
+        // 1. Récupérer le mode de paiement depuis COMMANDE
+        String modePaiement = null;
+        String sqlPaiement = "SELECT MODEPAIEMENT FROM COMMANDE WHERE IDCOMMANDE = ?";
+        try (PreparedStatement st = db.prepare(sqlPaiement)) {
+            st.setInt(1, idCommande);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    modePaiement = rs.getString(1);
+                }
+            }
+        }
+    
+        if (modePaiement == null) {
+            throw new SQLException("Commande ID " + idCommande + " non trouvée ou sans mode de paiement.");
+        }
 
+        // 2. Déterminer le mode de récupération (Retrait ou Livraison)
+        String modeRecuperation = null;
+    
+        // Vérifier Retrait
+        String sqlRetrait = "SELECT IDCOMMANDE FROM RETRAIT_BOUTIQUE WHERE IDCOMMANDE = ?";
+        try (PreparedStatement st = db.prepare(sqlRetrait)) {
+            st.setInt(1, idCommande);
+            if (st.executeQuery().next()) {
+                modeRecuperation = "Retrait";
+            }
+        }
+    
+        // Si ce n'est pas Retrait, vérifier Livraison
+        if (modeRecuperation == null) {
+            String sqlLivraison = "SELECT IDCOMMANDE FROM LIVRAISON_DOMICILE WHERE IDCOMMANDE = ?";
+            try (PreparedStatement st = db.prepare(sqlLivraison)) {
+                st.setInt(1, idCommande);
+                if (st.executeQuery().next()) {
+                    modeRecuperation = "Livraison";
+                }
+            }
+        }
+
+        if (modeRecuperation == null) {
+             throw new SQLException("Mode de récupération inconnu pour la commande " + idCommande);
+        }
+
+        return new String[]{modeRecuperation, modePaiement};
+    }
+    /**
+     * Enregistre la date effective de récupération/livraison dans la table de détail correspondante.
+     */
+    public void enregistrerDateRecup(int idCommande, String modeRecuperation) throws SQLException {
+    String sqlDetail;
+
+    if ("Retrait".equals(modeRecuperation)) {
+        //  Mise à jour du nom de colonne en DATEREELLE
+        sqlDetail = "UPDATE RETRAIT_BOUTIQUE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
+    } else if ("Livraison".equals(modeRecuperation)) {
+        //  Mise à jour du nom de colonne en DATEREELLE
+        sqlDetail = "UPDATE LIVRAISON_DOMICILE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
+    } else {
+        throw new SQLException("Mode de récupération invalide: " + modeRecuperation);
+    } // 
+
+    try (PreparedStatement st = db.prepare(sqlDetail)) {
+        st.setInt(1, idCommande);
+        int rows = st.executeUpdate();
+        
+        if (rows == 0) {
+            // Cela ne devrait pas arriver si la vérification de l'existence a eu lieu
+            throw new SQLException("Aucune ligne de détail mise à jour pour la commande ID " + idCommande + ". Vérifiez que la commande existe dans la table de détail (" + modeRecuperation + ").");
+        }
+    }
+}
+    
     /**
      * Met à jour le statut d'une commande.
      */

@@ -12,8 +12,8 @@ public class Main {
             // À adapter selon ton environnement Oracle
             Database db = new Database(
                     "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1", // change
-                    "trombatm",
-                    "trombatm"
+                    "ikaouasi",
+                    "ikaouasi"
             );
 
             // Étape 2 : Créer les objets en cascade (injection manuelle)
