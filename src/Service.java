@@ -1,18 +1,34 @@
 import java.sql.SQLException;
 import java.util.List;
-import java.util.ArrayList; // Ajouté pour la gestion des listes
-import java.util.stream.Collectors; // Ajouté pour faciliter certains calculs
+import java.util.ArrayList; 
+import java.util.stream.Collectors; 
 
 /**
  * Couche métier (business logic).
  * Orchestre les appels au DAO et gère les transactions (commit/rollback).
- *  C'EST ICI que se fait la gestion des transactions, PAS dans le DAO.
+ * C'EST ICI que se fait la gestion des transactions, PAS dans le DAO.
  */
 public class Service {
 
     // Références vers le DAO (pour les requêtes) et Database (pour commit/rollback)
     private final Dao dao;
     private final Database db;
+
+    /**
+     * Classe interne utilisée pour stocker temporairement une ligne de commande 
+     * avec les prix calculés avant l'insertion en base.
+     */
+    private static class LigneAvecPrix {
+        public final Ligne ligne;
+        public final double prixUnitaire;
+        public final double sousTotal;
+
+        public LigneAvecPrix(Ligne ligne, double prixUnitaire, double sousTotal) {
+            this.ligne = ligne;
+            this.prixUnitaire = prixUnitaire;
+            this.sousTotal = sousTotal;
+        }
+    }
 
     /**
      * Constructeur : reçoit Database et Dao par injection de dépendance.
@@ -34,33 +50,91 @@ public class Service {
     }
 
     /**
-     * Passe une commande complète (transaction multi-étapes).
+     * Passe une commande complète (transaction multi-étapes) - Fonctionnalité F1.
      */
-    public int passerCommande(int idClient, String mode, List<Ligne> lignes) throws Exception {
+    public int passerCommande(int idClient, String mode, String modePaiement, List<Ligne> lignes) throws Exception {
 
         try {
-            // Étape 1 : créer la commande et récupérer son ID
-            int idCommande = dao.creerCommande(idClient);
+            // Étape 0 : VÉRIFICATION, CALCUL DE PRIX et PRÉPARATION DES DONNÉES
+            List<LigneAvecPrix> lignesPretes = new ArrayList<>();
+            double montantTotalCommandeValeur = 0.0; 
 
-            // Étape 2 : ajouter chaque ligne (numérotées 1, 2, 3...)
-            int i = 1;
-            for (Ligne l : lignes) {
-                // NOTE: La vérification de prix (F1) devrait se faire ici en vrai,
-                // mais pour ce projet, on se concentre sur les transactions F2/F3.
-                dao.ajouterLigneCommande(idCommande, l, i++);
+            // Vérification que la liste de lignes n'est pas vide
+            if (lignes.isEmpty()) {
+                throw new Exception("La commande ne contient aucun produit.");
             }
 
-            // Étape 3 : enregistrer le mode de récupération
-            dao.enregistrerModeRecuperation(idCommande, mode);
+            for (Ligne l : lignes) {
+                // 0.1. Vérification de la saisonnalité
+                if (!dao.estProduitEnSaison(l.idProduit)) {
+                    throw new Exception("Le produit ID " + l.idProduit + " n'est pas en saison.");
+                }
 
-            // Étape 4 : valider la transaction (tout est OK)
+                // 0.2. Vérification du stock suffisant
+                double stockTotal = dao.getStockTotalProduit(l.idProduit);
+                if (stockTotal < l.quantite) {
+                    throw new Exception("Stock insuffisant pour le produit ID " + l.idProduit + ". Requis: " + l.quantite + ", Disponible: " + stockTotal);
+                }
+                
+                // 0.3. Calculer le prix unitaire (y compris prix réduit F2)
+                double prixUnitaire = dao.getPrixVente(l.idProduit);
+                double sousTotal = l.quantite * prixUnitaire;
+                montantTotalCommandeValeur += sousTotal; // Accumuler le sous-total de la commande
+                
+                lignesPretes.add(new LigneAvecPrix(l, prixUnitaire, sousTotal));
+            }
+            
+            // Étape 1 : Créer la commande et récupérer son ID
+            int idCommande = dao.creerCommande(idClient, modePaiement);
+
+            // Étape 2 : Ajouter chaque ligne avec le prix calculé
+            int i = 1;
+            for (LigneAvecPrix l : lignesPretes) {
+                dao.ajouterLigneCommande(idCommande, l.ligne, i++, l.prixUnitaire, l.sousTotal);
+            }
+
+            // Étape 3 : Gérer le mode de récupération et les frais de livraison
+            dao.enregistrerModeRecuperation(idCommande, mode);
+            // Ajout des frais de livraison au montant total de la commande (calcul complet)
+            if (mode.equals("Livraison")) {
+                montantTotalCommandeValeur += 5.0; 
+            }
+            // NOTE : Le montant total calculé (montantTotalCommandeValeur) est disponible ici.
+            
+            // Étape 4 : GESTION DU STOCK (DÉSTOCKAGE FIFO)
+            for (LigneAvecPrix ligne : lignesPretes) {
+                double quantiteRequise = ligne.ligne.quantite;
+
+                // 4.1. Récupérer les lots disponibles pour ce produit (triés FIFO/FEFO)
+                List<Dao.LotInfo> lots = dao.getStockLotsProduit(ligne.ligne.idProduit);
+
+                // 4.2. Déstockage séquentiel (FIFO)
+                double resteADestocker = quantiteRequise;
+                for (Dao.LotInfo lot : lots) {
+                    if (resteADestocker <= 0) break; // Le besoin est satisfait
+
+                    double quantiteLot = lot.stockActuel;
+                    double quantitePrise = Math.min(resteADestocker, quantiteLot);
+
+                    // 4.3. Déduire du lot dans la base
+                    dao.updateStockLot(lot.idLot, quantitePrise);
+
+                    resteADestocker -= quantitePrise;
+                }
+            }
+            
+            // Étape 5 : La commande reste à 'En preparation' ou 'Prete'.
+            // L'ancienne ligne 'dao.updateStatutCommande(idCommande, "Livrée")' a été retirée.
+            // La clôture à 'Livrée' est gérée par la fonction F3 (cloturerCommande).
+
+            // Étape 6 (ancien Étape 6) : valider la transaction (tout est OK)
             db.commit();
             return idCommande;
 
         } catch (Exception e) {
-            // En cas d'erreur, annuler tous les changements
+            // En cas d'erreur (vérification échouée ou erreur SQL), annuler tous les changements
             db.rollback();
-            // Lancer l'exception pour que Menu puisse l'afficher
+            // Re-lancer l'exception avec un message clair pour le Menu
             throw new Exception("Échec de la commande : " + e.getMessage()); 
         }
     }
@@ -106,65 +180,30 @@ public class Service {
     }
 
     // =============================================================
-    // FONCTIONNALITÉ F3 : CLÔTURE & DÉSTOCKAGE (Transaction)
+    // FONCTIONNALITÉ F3 : CLÔTURE DE COMMANDE (SIMPLIFIÉE)
     // =============================================================
     
     /**
-     * Clôture une commande, réalise le déstockage des produits (FIFO) et change le statut.
-     * Cette méthode est critique : elle doit être atomique (tout ou rien).
+     * Clôture une commande. Cette version met à jour le statut
+     * de 'En preparation' à 'Livrée'.
      */
     public void cloturerCommande(int idCommande) throws Exception {
         try {
-            // 1. Verrouiller la commande et vérifier le statut
-            // SELECT... FOR UPDATE empêche une autre transaction de la modifier.
+            // 1. Verrouiller la commande et vérifier le statut (SELECT... FOR UPDATE)
             String statut = dao.getStatutEtVerrouillerCommande(idCommande);
             
-            if (!"En préparation".equals(statut)) {
-                throw new Exception("La commande ID " + idCommande + " est déjà " + statut + ". Seules les commandes 'En préparation' peuvent être clôturées.");
+            if (!"En preparation".equals(statut)) {
+                throw new Exception("La commande ID " + idCommande + " est déjà " + statut + ".");
             }
+            
+            // 2. Mettre à jour le statut de la commande à "Livree"
+            dao.updateStatutCommande(idCommande, "Livree");
 
-            // 2. Récupérer les lignes de la commande à déstocker
-            List<Ligne> lignes = dao.getLignesCommande(idCommande);
-
-            // 3. Traiter chaque ligne (Logique de Déstockage FIFO)
-            for (Ligne ligne : lignes) {
-                double quantiteRequise = ligne.quantite;
-
-                // 3.1. Récupérer les lots disponibles pour ce produit (triés FIFO)
-                List<Dao.LotInfo> lots = dao.getStockLotsProduit(ligne.idProduit);
-
-                // Vérification du stock total disponible
-                double stockTotal = lots.stream().mapToDouble(lot -> lot.stockActuel).sum();
-                if (stockTotal < quantiteRequise) {
-                    throw new Exception("Stock insuffisant pour le produit ID " + ligne.idProduit + ". Requis: " + quantiteRequise + " " + ligne.unite + ", Disponible: " + stockTotal + " " + ligne.unite);
-                }
-
-                // 3.2. Déstockage séquentiel (FIFO : les lots les plus anciens/proches de péremption sont consommés en premier)
-                double resteADestocker = quantiteRequise;
-                for (Dao.LotInfo lot : lots) {
-                    if (resteADestocker <= 0) break; // Le besoin est satisfait
-
-                    double quantiteLot = lot.stockActuel;
-                    // Quantité réelle que nous allons prendre de ce lot
-                    double quantitePrise = Math.min(resteADestocker, quantiteLot);
-
-                    // 3.3. Déduire du lot dans la base
-                    dao.updateStockLot(lot.idLot, quantitePrise);
-
-                    // Mise à jour de la quantité restante à déstocker pour les lots suivants
-                    resteADestocker -= quantitePrise;
-                }
-            }
-
-            // 4. Mettre à jour le statut de la commande à "Livrée"
-            dao.updateStatutCommande(idCommande, "Livrée");
-
-            // 5. Valider la transaction (COMMIT) : Toutes les étapes (verrouillage, déstockage, changement de statut) sont validées ensemble.
+            // 3. Valider la transaction (COMMIT)
             db.commit();
 
         } catch (Exception e) {
-            // Annuler la transaction (ROLLBACK) : si le stock est insuffisant,
-            // ou si une erreur SQL se produit, tous les changements sont annulés.
+            // Annuler la transaction (ROLLBACK)
             db.rollback();
             throw new Exception("Échec de la clôture de la commande ID " + idCommande + " : " + e.getMessage());
         }

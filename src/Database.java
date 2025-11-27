@@ -11,48 +11,44 @@ public class Database {
 
     /**
      * Constructeur : établit la connexion à Oracle et désactive l'AutoCommit.
-     * AutoCommit = false signifie qu'on doit appeler commit() manuellement pour valider les changements.
-     * Cela permet de gérer des transactions (plusieurs INSERT/UPDATE atomiques).
      */
     public Database(String url, String user, String pass) throws SQLException {
         con = DriverManager.getConnection(url, user, pass);
         con.setAutoCommit(false); // Important : gestion manuelle des transactions
     }
 
-    /**
-     * Crée un PreparedStatement (requête SQL sécurisée avec paramètres).
-     * RETURN_GENERATED_KEYS permet de récupérer les IDs auto-générés par Oracle.
-     */
+    // ----------------------------------------------------------------------
+    // SURCHARGE EXISTANTE (Utilise l'indicateur standard)
     public PreparedStatement prepare(String sql) throws SQLException {
         return con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
     }
 
+    // ----------------------------------------------------------------------
     /**
-     * Valide la transaction en cours (tous les INSERT/UPDATE sont enregistrés définitivement).
+     * NOUVELLE SURCHARGE : Crée un PreparedStatement spécifiant les noms des colonnes à retourner.
+     * C'est la méthode recommandée pour Oracle lors de l'utilisation de séquences
+     * afin de récupérer l'ID généré.
      */
+    public PreparedStatement prepare(String sql, String[] columnNames) throws SQLException {
+        return con.prepareStatement(sql, columnNames);
+    }
+    // ----------------------------------------------------------------------
+
+
     public void commit() throws SQLException {
         con.commit();
     }
 
-    /**
-     * Annule la transaction en cours (tous les INSERT/UPDATE sont annulés).
-     * Utilisé en cas d'erreur pour garantir la cohérence des données.
-     * Les exceptions sont ignorées (si le rollback échoue, on ne peut rien faire de plus).
-     */
     public void rollback() {
         try { con.rollback(); } catch (Exception ignored) {}
     }
 
-    /**
-     * Ferme la connexion Oracle proprement.
-     * Les exceptions sont ignorées (si la fermeture échoue, l'application se termine de toute façon).
-     */
     public void close() {
         try { con.close(); } catch (Exception ignored) {}
     }
 
     /**
-     * Accesseur pour récupérer la connexion brute (rarement utilisé).
+     * Accesseur pour récupérer la connexion brute (utilisé pour les Statements simples dans Dao.java).
      */
     public Connection getConnection() {
         return con;

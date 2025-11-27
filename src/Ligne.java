@@ -1,3 +1,5 @@
+// FICHIER : Ligne.java
+
 /**
  * Objet de données représentant une ligne de commande (un produit commandé).
  * Classe immutable : tous les champs sont "final" (ne peuvent pas être modifiés après création).
@@ -11,17 +13,16 @@ public class Ligne {
     public final double quantite;
     // Unité de mesure : "kg" ou "unité"
     public final String unite;
-    // Mode de paiement : "EN LIGNE" ou "EN BOUTIQUE"
-    public final String modePaiement;
+    // NOUVELLE VERSION : modePaiement retiré
 
     /**
      * Constructeur : initialise tous les champs.
      * Une fois créé, un objet Ligne ne peut plus être modifié (immutable).
      */
-    public Ligne(int idProduit, double quantite, String unite, String modePaiement) {
+    public Ligne(int idProduit, double quantite, String unite) {
         this.idProduit = idProduit;
         this.quantite = quantite;
         this.unite = unite;
-        this.modePaiement = modePaiement;
+        // modePaiement retiré
     }
 }

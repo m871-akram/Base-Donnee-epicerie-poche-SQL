@@ -24,12 +24,12 @@ public class Menu {
     public void start() {
 
         while (true) {
-            // Afficher le menu principal
+            // Afficher le menu principal (numéros mis à jour)
             System.out.println("\n--- MENU ---");
             System.out.println("1. Afficher catalogue");
-            System.out.println("2. Passer commande");
-            System.out.println("3. Ajuster prix péremption (Transaction F2)"); // ⬅NOUVEAU NOM
-            System.out.println("4. Clôturer commande (Transaction F3)");
+            System.out.println("2. Passer commande (F1: Création + Vérifications + Déstockage)"); // F1 complète
+            System.out.println("3. Ajuster prix péremption (F2: Transaction d'ajustement)");
+            System.out.println("4. Clôturer commande (F3: Mise à jour statut uniquement)"); // F3 simplifiée
             System.out.println("0. Quitter");
             System.out.print("Choix : ");
 
@@ -37,12 +37,12 @@ public class Menu {
             try {
                 int c = Integer.parseInt(sc.nextLine());
 
-                // Switch expression (Java 14+) : appeler la bonne méthode selon le choix
+                // Appeler la bonne méthode selon le choix
                 switch (c) {
                     case 1 -> afficherCatalogue();
                     case 2 -> passerCommande();
-                    case 3 -> ajusterPrixEtAfficherAlertes(); // ⬅ NOUVELLE MÉTHODE
-                    case 4 -> cloturerCommande();
+                    case 3 -> ajusterPrixEtAfficherAlertes(); // F2
+                    case 4 -> cloturerCommande(); // F3
                     case 0 -> {
                         System.out.println("Au revoir !");
                         return; // Quitter la boucle et le programme
@@ -52,12 +52,14 @@ public class Menu {
             } catch (NumberFormatException e) {
                 System.out.println("Veuillez entrer un nombre valide.");
             } catch (Exception e) {
-                 System.out.println("Erreur fatale : " + e.getMessage());
+                System.out.println("Erreur fatale : " + e.getMessage());
             }
         }
     }
 
-    // --- LOGIQUE F1 (Affichage simple) ---
+    // -------------------------------------------------------------
+    // --- LOGIQUE F1 (Affichage simple) ---------------------------
+    // -------------------------------------------------------------
 
     private void afficherCatalogue() {
         try {
@@ -68,15 +70,25 @@ public class Menu {
         }
     }
 
-    // --- LOGIQUE F1 (Transaction) ---
+    // -------------------------------------------------------------
+    // --- LOGIQUE F1 (Transaction complète) -----------------------
+    // -------------------------------------------------------------
 
+    /**
+     * Option 2 : Passe une commande. Le Service gère la vérification (stock/saison),
+     * le calcul des prix, la création des lignes et le DÉSTOCKAGE (FIFO) dans une seule transaction.
+     */
     private void passerCommande() {
         try {
             System.out.print("ID client : ");
             int idClient = Integer.parseInt(sc.nextLine());
 
             System.out.print("Mode récupération (Retrait/Livraison) : ");
-            String mode = sc.nextLine();
+            String modeRecuperation = sc.nextLine(); // Renommé pour plus de clarté
+
+            // NOUVEAU : Lecture du mode de paiement pour la COMMANDE
+            System.out.print("Mode paiement (EN LIGNE/EN BOUTIQUE) : ");
+            String modePaiement = sc.nextLine();
 
             // Saisie des lignes de commande
             List<Ligne> lignes = new ArrayList<>();
@@ -93,37 +105,50 @@ public class Menu {
                 System.out.print("Unité (Kg/Unité) : ");
                 String u = sc.nextLine();
 
-                System.out.print("Paiement (EN LIGNE/EN BOUTIQUE) : ");
-                String mp = sc.nextLine();
-
-                // Créer un objet Ligne et l'ajouter à la liste
-                lignes.add(new Ligne(p, q, u, mp));
+                // NOUVEAU : La classe Ligne a été modifiée, nous n'avons plus besoin de lire le mode paiement ici
+                // Lignes.add(new Ligne(p, q, u, mp));
+                
+                // Correction : Utilisation du constructeur de Ligne sans modePaiement
+                // En supposant que votre classe Ligne ait été mise à jour vers : 
+                // public Ligne(int idProduit, double quantite, String unite) 
+                // Si la classe Ligne originale était toujours en place, il faudrait l'adapter ou passer un mode paiement par défaut.
+                // On suppose qu'elle a été mise à jour :
+                lignes.add(new Ligne(p, q, u)); // <--- CORRECTION D'APPEL DE CONSTRUCTEUR
             }
 
-            // Appeler le Service pour créer la commande (transaction complète)
-            int idC = service.passerCommande(idClient, mode, lignes);
-            System.out.println("\n Commande créée ID = " + idC + " en statut 'En préparation'.");
+            // Appeler le Service pour créer la commande (transaction complète F1)
+            // NOUVEAU : Passage du modePaiement à la méthode passerCommande
+            int idC = service.passerCommande(idClient, modeRecuperation, modePaiement, lignes); // <--- CORRECTION DE LA SIGNATURE
+            
+            // La commande est créée et immédiatement traitée (statut 'Livrée' en F1)
+            System.out.println("\n Commande créée et traitée ID = " + idC + ". Stock déduit.");
 
         } catch (Exception e) {
-            // Si erreur (ex : produit inexistant), afficher le message
+            // Affiche l'erreur du Service (ex : Stock insuffisant, Produit hors saison)
             System.out.println(" Erreur lors de la création de la commande : " + e.getMessage());
         }
     }
 
-    // --- LOGIQUE F2 (Transaction Ajustement Prix) ---
+    // -------------------------------------------------------------
+    // --- LOGIQUE F2 (Transaction Ajustement Prix) ----------------
+    // -------------------------------------------------------------
 
     /**
-     * Option 3 : Affiche les alertes de péremption ET demande d'ajuster les prix.
-     * Appelle la transaction F2 dans le Service.
+     * Option 3 : Affiche les alertes de péremption ET demande d'ajuster les prix (Transaction F2).
      */
     private void ajusterPrixEtAfficherAlertes() {
         try {
             // 1. Afficher d'abord les alertes pour information
             System.out.println("\n--- ALERTES PÉREMPTION (Lots expirant J+7) ---");
-            service.getAlertes().forEach(System.out::println);
+            List<String> alertes = service.getAlertes();
+            if (alertes.isEmpty()) {
+                System.out.println("Aucun produit n'est proche de la péremption.");
+                return;
+            }
+            alertes.forEach(System.out::println);
             
             // 2. Demander le pourcentage pour l'ajustement
-            System.out.print("Entrez le pourcentage de réduction à appliquer (ex: 30) : ");
+            System.out.print("\nEntrez le pourcentage de réduction à appliquer (ex: 30) : ");
             int pourcentage = Integer.parseInt(sc.nextLine());
 
             // 3. Appeler la transaction du Service
@@ -136,24 +161,27 @@ public class Menu {
         }
     }
 
-    // --- LOGIQUE F3 (Transaction Clôture/Déstockage) ---
+    // -------------------------------------------------------------
+    // --- LOGIQUE F3 (Transaction Clôture de Statut) --------------
+    // -------------------------------------------------------------
 
     /**
-     * Option 4 : Clôturer une commande, ce qui déclenche le déstockage FIFO.
-     * Appelle la transaction F3 dans le Service.
+     * Option 4 : Clôturer une commande. Mise à jour du statut. 
+     * Le déstockage est effectué par F1 dans cette nouvelle architecture.
      */
     private void cloturerCommande() {
         try {
-            System.out.print("ID commande à clôturer : ");
+            System.out.print("ID commande à clôturer (statut 'En préparation' requis) : ");
             int id = Integer.parseInt(sc.nextLine());
             
-            // Le Service gère le verrouillage, le déstockage FIFO et le statut.
+            // Le Service gère le verrouillage et le changement de statut.
             service.cloturerCommande(id); 
             
-            System.out.println("\n Commande ID " + id + " clôturée et stock déduit (FIFO).");
+            // Affichage mis à jour pour refléter que le déstockage est fait ailleurs
+            System.out.println("\n Commande ID " + id + " mise à jour au statut 'Livrée'.");
             
         } catch (Exception e) {
-            // L'erreur vient du Service (stock insuffisant, commande déjà traitée, etc.)
+            // L'erreur vient du Service (commande déjà traitée, etc.)
             System.out.println(" Erreur lors de la clôture : " + e.getMessage());
         }
     }
