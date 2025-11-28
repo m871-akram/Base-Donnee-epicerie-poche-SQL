@@ -1,9 +1,5 @@
-import java.sql.SQLException;
-import java.util.List;
-import java.util.ArrayList; 
-import java.util.stream.Collectors; 
-import java.util.Calendar;
-import java.util.Date;
+import java.sql.*;
+import java.util.*;
 
 /**
  * Couche métier (business logic).
@@ -37,6 +33,74 @@ public class Service {
     public Service(Database db, Dao dao) {
         this.db = db;
         this.dao = dao;
+    }
+
+
+    public int verifierOuCreerClient() throws Exception {
+        Scanner sc = new Scanner(System.in);
+
+        System.out.print("Êtes-vous un nouveau client ? (O/N) : ");
+        boolean nouveau = sc.nextLine().equalsIgnoreCase("O");
+
+        if (!nouveau) {
+            // CLIENT EXISTANT
+            System.out.print("ID client : ");
+            int idClient = Integer.parseInt(sc.nextLine());
+
+            if (!dao.clientExiste(idClient))
+                throw new Exception("Client " + idClient + " inexistant.");
+
+            return idClient;
+        }
+
+        // NOUVEAU CLIENT
+        System.out.print("Choisissez un ID client : ");
+        int idClient = Integer.parseInt(sc.nextLine());
+
+        System.out.print("Voulez-vous créer un compte complet (O) ou anonyme (N) ? ");
+        boolean complet = sc.nextLine().equalsIgnoreCase("O");
+
+        try {
+            dao.creerClient(idClient, !complet);
+
+            if (complet) {
+                // Informations personnelles
+                System.out.print("Nom : ");
+                String nom = sc.nextLine();
+
+                System.out.print("Prénom : ");
+                String prenom = sc.nextLine();
+
+                System.out.print("Email : ");
+                String email = sc.nextLine();
+
+                System.out.print("Téléphone : ");
+                String tel = sc.nextLine();
+
+                dao.creerInfosClient(idClient, nom, prenom, email, tel);
+
+                // Adresse
+                int idAdresse = new Random().nextInt(10000);
+
+                System.out.print("Rue : ");
+                String rue = sc.nextLine();
+
+                System.out.print("Ville : ");
+                String ville = sc.nextLine();
+
+                System.out.print("Pays : ");
+                String pays = sc.nextLine();
+
+                dao.creerAdresse(idAdresse, idClient, rue, ville, pays);
+            }
+
+            db.commit();
+            return idClient;
+
+        } catch (Exception e) {
+            db.rollback();
+            throw new Exception("Erreur lors de la création du client : " + e.getMessage());
+        }
     }
 
     // =============================================================

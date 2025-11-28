@@ -80,8 +80,7 @@ public class Menu {
      */
     private void passerCommande() {
         try {
-            System.out.print("ID client : ");
-            int idClient = Integer.parseInt(sc.nextLine());
+            int idClient = service.verifierOuCreerClient();
 
             System.out.print("Mode récupération (Retrait/Livraison) : ");
             String modeRecuperation = sc.nextLine();

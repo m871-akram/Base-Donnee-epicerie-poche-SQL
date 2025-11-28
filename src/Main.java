@@ -11,9 +11,9 @@ public class Main {
             // URL format : jdbc:oracle:thin:@host:port:sid
             // À adapter selon ton environnement Oracle
             Database db = new Database(
-                    "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1", // change
-                    "ikaouasi",
-                    "ikaouasi"
+                    "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1",
+                    "lrhorfim",
+                    "lrhorfim"
             );
 
             // Étape 2 : Créer les objets en cascade (injection manuelle)

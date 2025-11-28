@@ -31,9 +31,74 @@ public class Dao {
         }
     }
 
+
+    public boolean clientExiste(int idClient) throws SQLException {
+        String sql = "SELECT COUNT(*) FROM CLIENT WHERE IDCLIENT = ?";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idClient);
+            try (ResultSet rs = st.executeQuery()) {
+                rs.next();
+                return rs.getInt(1) > 0;
+            }
+        }
+    }
+
+    public void creerClient(int idClient, boolean anonyme) throws SQLException {
+        String sql = "INSERT INTO CLIENT (IDCLIENT, ANONYME) VALUES (?, ?)";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idClient);
+            st.setInt(2, anonyme ? 1 : 0);
+            st.executeUpdate();
+        }
+    }
+
+    public void creerInfosClient(int idClient, String nom, String prenom,
+                                 String email, String tel) throws SQLException {
+
+        String sql = """
+        INSERT INTO INFORMATION_CLIENT 
+        (EMAILCLIENT, NOMCLIENT, PRENOMCLIENT, NUMTELCLIENT, IDCLIENT)
+        VALUES (?, ?, ?, ?, ?)
+        """;
+
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setString(1, email);
+            st.setString(2, nom);
+            st.setString(3, prenom);
+            st.setString(4, tel);
+            st.setInt(5, idClient);
+            st.executeUpdate();
+        }
+    }
+
+    public void creerAdresse(int idAdresse, int idClient, String rue,
+                             String ville, String pays) throws SQLException {
+
+        String sql = """
+        INSERT INTO ADRESSE (IDADRESSE, ADRESSEPOSTALE, VILLE, RUE, PAYS, IDCLIENT)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """;
+
+        String adressePostale = rue + ", " + ville + ", " + pays;
+
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idAdresse);
+            st.setString(2, adressePostale);
+            st.setString(3, ville);
+            st.setString(4, rue);
+            st.setString(5, pays);
+            st.setInt(6, idClient);
+            st.executeUpdate();
+        }
+    }
+
+
+
     // =============================================================
     // FONCTIONNALITÉ F1 : CATALOGUE & CRÉATION COMMANDE
     // =============================================================
+
+
 
     /**
      * Récupère tous les produits de la base, triés par nom.
@@ -42,17 +107,17 @@ public class Dao {
         List<String> out = new ArrayList<>();
 
         String sql = """
-            SELECT idproduit, nomproduit, categorieproduit, modecond
-            FROM produit
-            ORDER BY nomproduit
-        """;
+        SELECT idproduit, nomproduit, categorieproduit
+        FROM produit
+        ORDER BY nomproduit
+    """;
 
         try (PreparedStatement st = db.prepare(sql);
              ResultSet rs = st.executeQuery()) {
             while (rs.next()) {
                 out.add(
-                    rs.getInt(1) + " - " +
-                    rs.getString(2) + " (" + rs.getString(3) + ") - " + rs.getString(4)
+                        rs.getInt(1) + " - " +
+                                rs.getString(2) + " (" + rs.getString(3) + ")"
                 );
             }
         }
