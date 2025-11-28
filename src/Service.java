@@ -2,11 +2,12 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.ArrayList; 
 import java.util.stream.Collectors; 
+import java.util.Calendar;
+import java.util.Date;
 
 /**
  * Couche métier (business logic).
  * Orchestre les appels au DAO et gère les transactions (commit/rollback).
- * C'EST ICI que se fait la gestion des transactions, PAS dans le DAO.
  */
 public class Service {
 
@@ -51,9 +52,9 @@ public class Service {
 
     /**
      * Passe une commande complète (transaction multi-étapes) - Fonctionnalité F1.
+     * @return Un objet ResultatCommande contenant l'ID de commande et le montant total final.
      */
-    public int passerCommande(int idClient, String mode, String modePaiement, List<Ligne> lignes) throws Exception {
-
+    public ResultatCommande passerCommande(int idClient, String mode, String modePaiement, List<Ligne> lignes) throws Exception {
         try {
             // Étape 0 : VÉRIFICATION, CALCUL DE PRIX et PRÉPARATION DES DONNÉES
             List<LigneAvecPrix> lignesPretes = new ArrayList<>();
@@ -95,11 +96,29 @@ public class Service {
 
             // Étape 3 : Gérer le mode de récupération et les frais de livraison
             dao.enregistrerModeRecuperation(idCommande, mode);
-            // Ajout des frais de livraison au montant total de la commande (calcul complet)
+            
             if (mode.equals("Livraison")) {
-                montantTotalCommandeValeur += 5.0; 
+                
+                // 3.1. Récupérer les données nécessaires au calcul (Appel au DAO)
+                String pays = dao.getPaysLivraison(idCommande);
+                String ville = dao.getVilleLivraison(idCommande);
+                double poidsTotal = dao.calculerPoidsTotalCommande(idCommande);
+                
+                // 3.2. Calculer les frais et la FDE (Appel aux fonctions Service)
+                double fraisLivraison = calculerFraisLivraison(pays, ville, poidsTotal);
+                java.util.Date dateEstimee = calculerDateLivraisonEstimee(pays, ville); 
+                
+                // 3.3. Mettre à jour la ligne LIVRAISON_DOMICILE dans la base (Appel au DAO)
+                dao.updateFraisEtDateLivraison(idCommande, fraisLivraison, dateEstimee);
+                
+                // 3.4. Ajouter les frais au montant total
+                montantTotalCommandeValeur += fraisLivraison; 
+                
+                System.out.println("\n--- Livraison Calculée ---");
+                System.out.println("Frais de livraison appliqués: " + String.format("%.2f", fraisLivraison) + "€");
+                System.out.println("Date estimée: " + dateEstimee.toString());
+                System.out.println("--------------------------\n");
             }
-            // NOTE : Le montant total calculé (montantTotalCommandeValeur) est disponible ici.
             
             // Étape 4 : GESTION DU STOCK (DÉSTOCKAGE FIFO)
             for (LigneAvecPrix ligne : lignesPretes) {
@@ -124,12 +143,12 @@ public class Service {
             }
             
             // Étape 5 : La commande reste à 'En preparation' ou 'Prete'.
-            // L'ancienne ligne 'dao.updateStatutCommande(idCommande, "Livrée")' a été retirée.
-            // La clôture à 'Livrée' est gérée par la fonction F3 (cloturerCommande).
 
-            // Étape 6 (ancien Étape 6) : valider la transaction (tout est OK)
+            // Étape 6 : valider la transaction (tout est OK)
             db.commit();
-            return idCommande;
+            
+            // Étape 7 : Retourner l'ID et le montant total final
+            return new ResultatCommande(idCommande, montantTotalCommandeValeur);
 
         } catch (Exception e) {
             // En cas d'erreur (vérification échouée ou erreur SQL), annuler tous les changements
@@ -212,14 +231,13 @@ public class Service {
             
             if ("EN BOUTIQUE".equals(modePaiement)) {
                  // Étape Paiement en boutique : Si un enregistrement est nécessaire
-                 // dao.enregistrerPaiement(idCommande, /* autres infos */);
                  System.out.println("Paiement EN BOUTIQUE enregistré.");
             }
         
         } else if ("Livraison".equals(modeRecuperation)) {
             statutFinal = "Livree";
-            // Étape Frais de livraison : Affichage ou calcul final
-            System.out.println("Calcul des frais de livraison finaux : 5.0 € (fixes)."); 
+            // NOTE : Les frais ont été calculés et stockés lors de F1.
+            System.out.println("Frais de livraison appliqués : Déjà enregistrés lors de la commande."); 
         } else {
             throw new Exception("Mode de récupération non pris en charge.");
         }
@@ -232,7 +250,7 @@ public class Service {
 
         // 6. Valider la transaction
         db.commit();
-        System.out.println("✅ Clôture de la commande " + idCommande + " réussie. Nouveau statut : " + statutFinal);
+        System.out.println("Clôture de la commande " + idCommande + " réussie. Nouveau statut : " + statutFinal);
 
     } catch (Exception e) {
         // En cas d'erreur, annuler tout
@@ -242,4 +260,95 @@ public class Service {
         db.setAutoCommit(true); // Rétablir l'auto-commit
     }
 }
+
+// =============================================================
+// LOGIQUE MÉTIER DE LIVRAISON (Nouvelles fonctions)
+// =============================================================
+
+/**
+ * Calcule les frais de livraison basés sur le pays, la ville (zone) et le poids.
+ */
+public double calculerFraisLivraison(String pays, String ville, double poidsTotal) throws Exception {
+    double fraisPays;
+    double fraisPoids;
+    double fraisDistance;
+
+    // 1. Déterminer les frais de base selon le PAYS (Facteur 1)
+    if ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) {
+        fraisPays = 5.00; // Frais de base Métropole
+    } else if (isDOMTOM(ville)) {
+        fraisPays = 25.00; // Frais de base DOM-TOM 
+    } else {
+        fraisPays = 40.00; // Frais International
+    }
+
+    // 2. Ajouter un coût basé sur le POIDS (Facteur 2)
+    fraisPoids = poidsTotal * 0.5; // 0.5€ par Kg
+
+    // 3. Ajouter un coût basé sur la DISTANCE/ZONE (Facteur 3)
+    if ("GRENOBLE".equalsIgnoreCase(ville) || "SAINT-MARTIN-D'HERES".equalsIgnoreCase(ville)) {
+        fraisDistance = 0.00; // Zone locale (Isère)
+    } else if ("LYON".equalsIgnoreCase(ville)) {
+        fraisDistance = 5.00; // Petite distance (Rhône-Alpes)
+    } else {
+        fraisDistance = 10.00; // Grande distance (hors Rhône-Alpes)
+    }
+    
+    // Total
+    return fraisPays + fraisPoids + fraisDistance;
 }
+
+/**
+ * Calcule la Date de Livraison Estimée (FDE) basée sur le pays (délai de transit).
+ */
+public java.util.Date calculerDateLivraisonEstimee(String pays, String ville) {
+    // Utilise Calendar pour manipuler la date facilement
+    java.util.Calendar cal = java.util.Calendar.getInstance();
+    cal.setTime(new java.util.Date()); // Date de la commande (maintenant)
+
+    int delaiJours = 1; // 1 jour pour préparer la commande
+    
+    // Délai de transit selon la destination
+    if ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) {
+        delaiJours += 3; // 3 jours de transit Métropole (total 4 jours)
+    } else if (isDOMTOM(ville)) {
+        delaiJours += 10; // 10 jours de transit DOM-TOM (total 11 jours)
+    } else {
+        delaiJours += 15; // 15 jours de transit International (total 16 jours)
+    }
+
+    // Ajout du délai total à la date de commande
+    cal.add(java.util.Calendar.DAY_OF_YEAR, delaiJours);
+    
+    return cal.getTime();
+}
+
+/**
+ * Méthode utilitaire pour vérifier si la ville fait partie des départements ou territoires d'outre-mer.
+ */
+private boolean isDOMTOM(String ville) {
+    if (ville == null) return false;
+    String villeMaj = ville.toUpperCase();
+    return villeMaj.contains("FORT-DE-FRANCE")  || villeMaj.contains("CAYENNE") || 
+           villeMaj.contains("SAINT-DENIS")     || villeMaj.contains("NOUMÉA")  ||
+           villeMaj.contains("LES ABYMES")      || villeMaj.contains("PAPEETE") ||
+           villeMaj.contains("MAMOUDZOU");
+}
+
+// =============================================================
+// CLASSE DE RETOUR (AJOUTÉE)
+// =============================================================
+/**
+ * Objet de retour pour la méthode passerCommande, contenant l'ID et le montant final.
+ */
+public class ResultatCommande {
+    public final int idCommande;
+    public final double montantTotal;
+
+    public ResultatCommande(int idCommande, double montantTotal) {
+        this.idCommande = idCommande;
+        this.montantTotal = montantTotal;
+    }
+}
+
+} // Fin de la classe Service

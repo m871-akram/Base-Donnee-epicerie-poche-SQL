@@ -24,7 +24,7 @@ public class Menu {
     public void start() {
 
         while (true) {
-            // Afficher le menu principal (numéros mis à jour)
+            // Afficher le menu principal
             System.out.println("\n--- MENU ---");
             System.out.println("1. Afficher catalogue");
             System.out.println("2. Passer commande (F1: Création + Vérifications + Déstockage)"); // F1 complète
@@ -84,9 +84,9 @@ public class Menu {
             int idClient = Integer.parseInt(sc.nextLine());
 
             System.out.print("Mode récupération (Retrait/Livraison) : ");
-            String modeRecuperation = sc.nextLine(); // Renommé pour plus de clarté
+            String modeRecuperation = sc.nextLine();
 
-            // NOUVEAU : Lecture du mode de paiement pour la COMMANDE
+            // Lecture du mode de paiement pour la COMMANDE
             System.out.print("Mode paiement (EN LIGNE/EN BOUTIQUE) : ");
             String modePaiement = sc.nextLine();
 
@@ -97,7 +97,7 @@ public class Menu {
             while (true) {
                 System.out.print("ID produit (0 pour terminer) : ");
                 int p = Integer.parseInt(sc.nextLine());
-                if (p == 0) break; // 0 = sortir de la boucle
+                if (p == 0) break;
 
                 System.out.print("Quantité : ");
                 double q = Double.parseDouble(sc.nextLine());
@@ -105,23 +105,20 @@ public class Menu {
                 System.out.print("Unité (Kg/Unité) : ");
                 String u = sc.nextLine();
 
-                // NOUVEAU : La classe Ligne a été modifiée, nous n'avons plus besoin de lire le mode paiement ici
-                // Lignes.add(new Ligne(p, q, u, mp));
-                
-                // Correction : Utilisation du constructeur de Ligne sans modePaiement
-                // En supposant que votre classe Ligne ait été mise à jour vers : 
-                // public Ligne(int idProduit, double quantite, String unite) 
-                // Si la classe Ligne originale était toujours en place, il faudrait l'adapter ou passer un mode paiement par défaut.
-                // On suppose qu'elle a été mise à jour :
-                lignes.add(new Ligne(p, q, u)); // <--- CORRECTION D'APPEL DE CONSTRUCTEUR
+                // Supposons que Ligne(int, double, String) est le constructeur correct.
+                lignes.add(new Ligne(p, q, u)); 
             }
 
             // Appeler le Service pour créer la commande (transaction complète F1)
-            // NOUVEAU : Passage du modePaiement à la méthode passerCommande
-            int idC = service.passerCommande(idClient, modeRecuperation, modePaiement, lignes); // <--- CORRECTION DE LA SIGNATURE
+            // LIGNE CORRIGÉE : Récupération de l'objet ResultatCommande
+            Service.ResultatCommande resultat = service.passerCommande(idClient, modeRecuperation, modePaiement, lignes);
             
-            // La commande est créée et immédiatement traitée (statut 'Livrée' en F1)
-            System.out.println("\n Commande créée et traitée ID = " + idC + ". Stock déduit.");
+            // Affichage mis à jour pour afficher l'ID et le montant total
+            System.out.println("\n✅ Commande créée avec succès !");
+            System.out.println("ID Commande: " + resultat.idCommande);
+            System.out.println("Montant total à payer (incl. frais): " + String.format("%.2f", resultat.montantTotal) + "€");
+            System.out.println("Stock déduit.");
+
 
         } catch (Exception e) {
             // Affiche l'erreur du Service (ex : Stock insuffisant, Produit hors saison)
@@ -167,7 +164,6 @@ public class Menu {
 
     /**
      * Option 4 : Clôturer une commande. Mise à jour du statut. 
-     * Le déstockage est effectué par F1 dans cette nouvelle architecture.
      */
     private void cloturerCommande() {
         try {

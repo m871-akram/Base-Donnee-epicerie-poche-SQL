@@ -37,7 +37,6 @@ public class Dao {
 
     /**
      * Récupère tous les produits de la base, triés par nom.
-     * Retourne une liste de chaînes formatées (ex : "1 - Pomme de terre (Légume) - VRAC").
      */
     public List<String> getCatalogue() throws SQLException {
         List<String> out = new ArrayList<>();
@@ -102,7 +101,6 @@ public class Dao {
 
     /**
      * Récupère le prix de vente d'un produit en VRAC.
-     * NOTE: On utilise le prix VRAC car le déstockage se fait sur les lots (VRAC).
      */
     public double getPrixVente(int idProduit) throws SQLException {
         String sql = "SELECT PRIXVENTEVRAC FROM VRAC WHERE IDPRODUIT = ?";
@@ -121,10 +119,8 @@ public class Dao {
     
     /**
      * Crée une nouvelle commande dans la base de données.
-     * ATTENTION : Utilise la séquence 'SEQ_COMMANDE' qui n'existe pas dans le script SQL initial.
      */
     public int creerCommande(int idClient, String modePaiement) throws SQLException { 
-        // L'appel à SEQ_COMMANDE.NEXTVAL est la source de l'erreur ORA-02289 si la séquence n'est pas créée.
         String sql = """
             INSERT INTO COMMANDE (IDCOMMANDE, DATECOMMANDE, HEURECOMMANDE, STATUT, MODEPAIEMENT, IDCLIENT) 
             VALUES (SEQ_COMMANDE.NEXTVAL, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'), 'En preparation', ?, ?)
@@ -167,6 +163,7 @@ public class Dao {
 
     /**
      * Enregistre le mode de récupération (Retrait ou Livraison).
+     * CORRECTION : Ajout de l'IDADRESSE = 1 dans LIVRAISON_DOMICILE pour les tests.
      */
     public void enregistrerModeRecuperation(int idCommande, String mode) throws SQLException {
 
@@ -179,9 +176,8 @@ public class Dao {
                 st.executeUpdate();
             }
         } else {
-            // Livraison : frais de 5€ hardcodés, IDLIVRAISONDOMICILE = IDCOMMANDE
-            // NOTE: IDADRESSE (non-NULL dans le schéma) est omis ici pour la simplicité de l'exercice F1.
-            String sql = "INSERT INTO livraison_domicile(idlivraisondomicile, idcommande, fraislivraison) VALUES (?, ?, 5)";
+            // Livraison : Ajout de IDADRESSE = 1 pour permettre la jointure avec la table ADRESSE.
+            String sql = "INSERT INTO livraison_domicile(idlivraisondomicile, idcommande, fraislivraison, idadresse) VALUES (?, ?, 5, 1)";
             try (PreparedStatement st = db.prepare(sql)) {
                 st.setInt(1, idCommande);
                 st.setInt(2, idCommande);
@@ -194,7 +190,6 @@ public class Dao {
 
     /**
      * Récupère la liste des lots disponibles pour un produit, triés selon la règle FIFO/FEFO.
-     * Priorité : 1. Date de Péremption (FEFO) ASC, 2. Date de Réception (FIFO).
      */
     public List<LotInfo> getStockLotsProduit(int idProduit) throws SQLException {
         List<LotInfo> lots = new ArrayList<>();
@@ -303,7 +298,6 @@ public class Dao {
 
     /**
      * Verrouille la commande (SELECT FOR UPDATE) et récupère son statut actuel.
-     * Utilisé pour la vérification du statut et la protection contre la concurrence.
      */
     public String getStatutEtVerrouillerCommande(int idCommande) throws SQLException {
         String statut = null;
@@ -320,6 +314,7 @@ public class Dao {
         }
         return statut;
     }
+    
     /**
      * Récupère le mode de récupération ('Retrait' ou 'Livraison') et le mode de paiement.
      * @return Un tableau de String {modeRecuperation, modePaiement}.
@@ -371,32 +366,30 @@ public class Dao {
 
         return new String[]{modeRecuperation, modePaiement};
     }
+    
     /**
      * Enregistre la date effective de récupération/livraison dans la table de détail correspondante.
      */
     public void enregistrerDateRecup(int idCommande, String modeRecuperation) throws SQLException {
-    String sqlDetail;
+        String sqlDetail;
 
-    if ("Retrait".equals(modeRecuperation)) {
-        //  Mise à jour du nom de colonne en DATEREELLE
-        sqlDetail = "UPDATE RETRAIT_BOUTIQUE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
-    } else if ("Livraison".equals(modeRecuperation)) {
-        //  Mise à jour du nom de colonne en DATEREELLE
-        sqlDetail = "UPDATE LIVRAISON_DOMICILE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
-    } else {
-        throw new SQLException("Mode de récupération invalide: " + modeRecuperation);
-    } // 
+        if ("Retrait".equals(modeRecuperation)) {
+            sqlDetail = "UPDATE RETRAIT_BOUTIQUE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
+        } else if ("Livraison".equals(modeRecuperation)) {
+            sqlDetail = "UPDATE LIVRAISON_DOMICILE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
+        } else {
+            throw new SQLException("Mode de récupération invalide: " + modeRecuperation);
+        } 
 
-    try (PreparedStatement st = db.prepare(sqlDetail)) {
-        st.setInt(1, idCommande);
-        int rows = st.executeUpdate();
-        
-        if (rows == 0) {
-            // Cela ne devrait pas arriver si la vérification de l'existence a eu lieu
-            throw new SQLException("Aucune ligne de détail mise à jour pour la commande ID " + idCommande + ". Vérifiez que la commande existe dans la table de détail (" + modeRecuperation + ").");
+        try (PreparedStatement st = db.prepare(sqlDetail)) {
+            st.setInt(1, idCommande);
+            int rows = st.executeUpdate();
+            
+            if (rows == 0) {
+                throw new SQLException("Aucune ligne de détail mise à jour pour la commande ID " + idCommande);
+            }
         }
     }
-}
     
     /**
      * Met à jour le statut d'une commande.
@@ -406,6 +399,94 @@ public class Dao {
         try (PreparedStatement st = db.prepare(sql)) {
             st.setString(1, statut);
             st.setInt(2, idCommande);
+            st.executeUpdate();
+        }
+    }
+
+    // =============================================================
+    // MÉTHODES DAO POUR CALCUL LIVRAISON (F1)
+    // =============================================================
+
+    /**
+     * Calcule le poids total (en Kg) d'une commande en sommant les quantités des lignes.
+     */
+    public double calculerPoidsTotalCommande(int idCommande) throws SQLException {
+        String sql = """
+            SELECT SUM(QUANTITECOMMANDE) 
+            FROM LIGNE_COMMANDE 
+            WHERE IDCOMMANDE = ? 
+            AND UNITECOMMANDE = 'Kg'
+            """; 
+
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idCommande);
+            try (ResultSet rs = st.executeQuery()) {
+                // Retourne 0 si la somme est NULL (pas de Kg)
+                return rs.next() ? rs.getDouble(1) : 0.0; 
+            }
+        }
+    }
+
+    /**
+     * Récupère le PAYS de livraison pour la commande spécifiée.
+     */
+    public String getPaysLivraison(int idCommande) throws SQLException {
+        String sql = """
+            SELECT A.PAYS 
+            FROM LIVRAISON_DOMICILE LD
+            JOIN ADRESSE A ON LD.IDADRESSE = A.IDADRESSE
+            WHERE LD.IDCOMMANDE = ?
+            """;
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idCommande);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("PAYS");
+                }
+            }
+        }
+        throw new SQLException("Impossible de trouver le pays : la commande " + idCommande + " n'est pas une livraison à domicile.");
+    }
+
+    /**
+     * Récupère la ville associée à l'adresse de livraison d'une commande.
+     */
+    public String getVilleLivraison(int idCommande) throws SQLException {
+        String sql = """
+            SELECT A.VILLE 
+            FROM LIVRAISON_DOMICILE LD
+            JOIN ADRESSE A ON LD.IDADRESSE = A.IDADRESSE
+            WHERE LD.IDCOMMANDE = ?
+            """; 
+
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idCommande);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString("VILLE").toUpperCase(); 
+                } 
+                return null;
+            }
+        }
+    }
+
+    /**
+     * Met à jour les frais et la date de livraison estimée dans LIVRAISON_DOMICILE.
+     */
+    public void updateFraisEtDateLivraison(int idCommande, double fraisLivraison, java.util.Date dateEstimee) throws SQLException {
+        String sql = """
+            UPDATE LIVRAISON_DOMICILE 
+            SET FRAISLIVRAISON = ?, DATELIVRAISONESTIMEE = ? 
+            WHERE IDCOMMANDE = ?
+            """;
+        try (PreparedStatement st = db.prepare(sql)) {
+            // 1. Les frais
+            st.setDouble(1, fraisLivraison);
+            // 2. La date estimée (conversion de java.util.Date à java.sql.Date)
+            st.setDate(2, new java.sql.Date(dateEstimee.getTime())); 
+            // 3. L'ID de la commande
+            st.setInt(3, idCommande);
+            
             st.executeUpdate();
         }
     }
