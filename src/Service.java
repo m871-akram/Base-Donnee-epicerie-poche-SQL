@@ -66,16 +66,17 @@ public class Service {
             }
 
             for (Ligne l : lignes) {
+                //  Vérification de la saisonnalité
+                double stockTotal = dao.getStockTotalProduit(l.idProduit);
+                if (stockTotal < l.quantite) {
+                    throw new Exception("Stock insuffisant pour le produit ID " + l.idProduit + ". Requis: " + l.quantite + ", Disponible: " + stockTotal);
+                }
                 // 0.1. Vérification de la saisonnalité
                 if (!dao.estProduitEnSaison(l.idProduit)) {
                     throw new Exception("Le produit ID " + l.idProduit + " n'est pas en saison.");
                 }
 
-                // 0.2. Vérification du stock suffisant
-                double stockTotal = dao.getStockTotalProduit(l.idProduit);
-                if (stockTotal < l.quantite) {
-                    throw new Exception("Stock insuffisant pour le produit ID " + l.idProduit + ". Requis: " + l.quantite + ", Disponible: " + stockTotal);
-                }
+                
                 
                 // 0.3. Calculer le prix unitaire (y compris prix réduit F2)
                 double prixUnitaire = dao.getPrixVente(l.idProduit);
