@@ -2,36 +2,27 @@ import java.sql.*;
 import java.util.*;
 
 /**
- * Data Access Object (DAO) : couche d'accès aux données.
- * Contient toutes les requêtes SQL pour dialoguer avec Oracle.
- * Cette classe N'A PAS la responsabilité de gérer les transactions (commit/rollback).
+ * DAO C'est pour l'acces aux donnees.
+ * Il execute les requetes SQL, pas de logique metier.
  */
 public class Dao {
-
-    // Référence vers Database pour exécuter les requêtes SQL
     private final Database db;
-
-    /**
-     * Constructeur : reçoit la Database par injection de dépendance.
-     */
     public Dao(Database db) {
         this.db = db;
     }
-
-    /**
-     * Classe interne pour encapsuler les informations des lots nécessaires au déstockage FIFO/FEFO.
-     */
+    
+    //Structure lot
     public static class LotInfo {
         public final int idLot;
         public final double stockActuel;
-        
+
         public LotInfo(int idLot, double stockActuel) {
             this.idLot = idLot;
             this.stockActuel = stockActuel;
         }
     }
 
-
+    // Client 
     public boolean clientExiste(int idClient) throws SQLException {
         String sql = "SELECT COUNT(*) FROM CLIENT WHERE IDCLIENT = ?";
         try (PreparedStatement st = db.prepare(sql)) {
@@ -43,6 +34,7 @@ public class Dao {
         }
     }
 
+    //On cree le client si il veut 
     public void creerClient(int idClient, boolean anonyme) throws SQLException {
         String sql = "INSERT INTO CLIENT (IDCLIENT, ANONYME) VALUES (?, ?)";
         try (PreparedStatement st = db.prepare(sql)) {
@@ -54,13 +46,11 @@ public class Dao {
 
     public void creerInfosClient(int idClient, String nom, String prenom,
                                  String email, String tel) throws SQLException {
-
         String sql = """
-        INSERT INTO INFORMATION_CLIENT 
-        (EMAILCLIENT, NOMCLIENT, PRENOMCLIENT, NUMTELCLIENT, IDCLIENT)
-        VALUES (?, ?, ?, ?, ?)
+            INSERT INTO INFORMATION_CLIENT
+            (EMAILCLIENT, NOMCLIENT, PRENOMCLIENT, NUMTELCLIENT, IDCLIENT)
+            VALUES (?, ?, ?, ?, ?)
         """;
-
         try (PreparedStatement st = db.prepare(sql)) {
             st.setString(1, email);
             st.setString(2, nom);
@@ -71,16 +61,14 @@ public class Dao {
         }
     }
 
-    public void creerAdresse(int idAdresse, int idClient, String rue,
-                             String ville, String pays) throws SQLException {
-
+    // Insertion des coordonnees 
+    public void creerAdresse(int idAdresse, int idClient,
+                             String rue, String ville, String pays) throws SQLException {
         String sql = """
-        INSERT INTO ADRESSE (IDADRESSE, ADRESSEPOSTALE, VILLE, RUE, PAYS, IDCLIENT)
-        VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO ADRESSE (IDADRESSE, ADRESSEPOSTALE, VILLE, RUE, PAYS, IDCLIENT)
+            VALUES (?, ?, ?, ?, ?, ?)
         """;
-
         String adressePostale = rue + ", " + ville + ", " + pays;
-
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idAdresse);
             st.setString(2, adressePostale);
@@ -92,157 +80,183 @@ public class Dao {
         }
     }
 
+    public List<Integer> getAdressesClient(int idClient) throws SQLException {
+        List<Integer> ids = new ArrayList<>();
+        String sql = "SELECT IDADRESSE FROM ADRESSE WHERE IDCLIENT=?";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idClient);
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) ids.add(rs.getInt(1));
+            }
+        }
+        return ids;
+    }
 
 
-    // =============================================================
-    // FONCTIONNALITÉ F1 : CATALOGUE & CRÉATION COMMANDE
-    // =============================================================
+    // Conditionnement
+    public String getTypeCond(int idProduit) throws SQLException {
+        String sql = "SELECT TYPECOND FROM CONDITIONNEMENT WHERE IDPRODUIT = ?";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idProduit);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) return rs.getString(1).toUpperCase();
+                throw new SQLException("Aucun conditionnement pour produit " + idProduit);
+            }
+        }
+    }
 
 
-
-    /**
-     * Récupère tous les produits de la base, triés par nom.
-     */
+    // Cataalogue
     public List<String> getCatalogue() throws SQLException {
         List<String> out = new ArrayList<>();
-
         String sql = """
-        SELECT idproduit, nomproduit, categorieproduit
-        FROM produit
-        ORDER BY nomproduit
-    """;
-
+            SELECT IDPRODUIT, NOMPRODUIT, CATEGORIEPRODUIT
+            FROM PRODUIT
+            ORDER BY NOMPRODUIT
+        """;
         try (PreparedStatement st = db.prepare(sql);
              ResultSet rs = st.executeQuery()) {
             while (rs.next()) {
-                out.add(
-                        rs.getInt(1) + " - " +
-                                rs.getString(2) + " (" + rs.getString(3) + ")"
-                );
+                out.add(rs.getInt(1) + " - " + rs.getString(2)
+                        + " (" + rs.getString(3) + ")");
             }
         }
         return out;
     }
 
-    // --- VÉRIFICATIONS F1 ---
-
-    /**
-     * Vérifie si le produit est en saison (sa période de disponibilité couvre la date actuelle).
-     */
+    //Saisonalite
     public boolean estProduitEnSaison(int idProduit) throws SQLException {
         String sql = """
-            SELECT COUNT(*) FROM PERIODE p
+            SELECT COUNT(*)
+            FROM PERIODE p
             JOIN PERIODE_DISPONIBILITE pd ON p.IDPERIODE = pd.IDPERIODE
-            WHERE pd.IDPRODUIT = ? 
+            WHERE pd.IDPRODUIT = ?
             AND SYSDATE BETWEEN p.DEBUTPERIODE AND p.FINPERIODE
         """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idProduit);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getInt(1) > 0;
-                }
-                return false;
+                rs.next();
+                return rs.getInt(1) > 0;
             }
         }
     }
-
-    /**
-     * Récupère le stock total cumulé pour un produit (somme de tous les lots).
-     */
-    public double getStockTotalProduit(int idProduit) throws SQLException {
-        String sql = "SELECT SUM(QUANTITESTOCKLOT) FROM LOT_PRODUIT WHERE IDPRODUIT = ?";
-        try (PreparedStatement st = db.prepare(sql)) {
-            st.setInt(1, idProduit);
-            try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    // Si le SUM est NULL (pas de lot), retourne 0.0
-                    return rs.getDouble(1);
-                }
-                return 0.0;
-            }
-        }
-    }
-
-    /**
-     * Récupère le prix de vente d'un produit en VRAC.
-     */
+    // PRIX / POIDS
     public double getPrixVente(int idProduit) throws SQLException {
-        String sql = "SELECT PRIXVENTEVRAC FROM VRAC WHERE IDPRODUIT = ?";
-        try (PreparedStatement st = db.prepare(sql)) {
+        String sqlV = "SELECT PRIXVENTEVRAC FROM VRAC WHERE IDPRODUIT = ?";
+        try (PreparedStatement st = db.prepare(sqlV)) {
             st.setInt(1, idProduit);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getDouble(1);
-                }
-                throw new SQLException("Prix de vente VRAC non trouvé pour le produit ID " + idProduit);
+                if (rs.next()) return rs.getDouble(1);
             }
         }
+        String sqlP = "SELECT PRIXVENTEP FROM PRECOND WHERE IDPRODUIT = ?";
+        try (PreparedStatement st = db.prepare(sqlP)) {
+            st.setInt(1, idProduit);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) return rs.getDouble(1);
+            }
+        }
+        throw new SQLException("Pas de prix pour le produit " + idProduit);
     }
-
-    // --- CRÉATION DE COMMANDE F1 ---
     
     /**
-     * Crée une nouvelle commande dans la base de données.
+     * Recupere le poids fixe d'un produit preconditionne pour le calcul du poids total.
      */
-    public int creerCommande(int idClient, String modePaiement) throws SQLException { 
+    public Double getPoidsFixe(int idProduit) throws SQLException {
+        String sql = "SELECT POIDSFIXE FROM PRECOND WHERE IDPRODUIT = ?";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idProduit);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) {
+                    double poids = rs.getDouble(1);
+                    return rs.wasNull() ? null : poids;
+                }
+            }
+        }
+        return null;
+    }
+
+
+    // Les commandes
+    public int creerCommande(int idClient, String modePaiement) throws SQLException {
         String sql = """
-            INSERT INTO COMMANDE (IDCOMMANDE, DATECOMMANDE, HEURECOMMANDE, STATUT, MODEPAIEMENT, IDCLIENT) 
-            VALUES (SEQ_COMMANDE.NEXTVAL, SYSDATE, TO_CHAR(SYSDATE, 'HH24:MI:SS'), 'En preparation', ?, ?)
+            INSERT INTO COMMANDE
+            (IDCOMMANDE, DATECOMMANDE, HEURECOMMANDE, STATUT, MODEPAIEMENT, IDCLIENT)
+            VALUES (SEQ_COMMANDE.NEXTVAL, SYSDATE, TO_CHAR(SYSDATE,'HH24:MI:SS'),
+                    'En preparation', ?, ?)
         """;
-        
-        try (PreparedStatement st = db.prepare(sql, new String[]{"IDCOMMANDE"})) { 
-            st.setString(1, modePaiement); 
+        try (PreparedStatement st = db.prepare(sql, new String[]{"IDCOMMANDE"})) {
+            st.setString(1, modePaiement);
             st.setInt(2, idClient);
             st.executeUpdate();
-            
-            // Récupérer l'ID auto-généré
             try (ResultSet rs = st.getGeneratedKeys()) {
-                if (rs.next()) {
-                    return rs.getInt(1); // Retourne le premier ID généré (IDCOMMANDE)
-                }
-                throw new SQLException("Échec de la récupération de l'ID de commande.");
+                if (rs.next()) return rs.getInt(1);
+                throw new SQLException("Impossible de recuperer le IDCOMMANDE.");
             }
         }
     }
 
-    /**
-     * Ajoute une ligne à la commande.
-     */
-    public void ajouterLigneCommande(int idCommande, Ligne l, int idLigne, double prixUnitaire, double sousTotal) throws SQLException {
+    public void ajouterLigneCommande(int idCommande, Ligne l, int num,
+                                     double prixUnitaire, double sousTotal) throws SQLException {
         String sql = """
-            INSERT INTO LIGNE_COMMANDE (IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
+            INSERT INTO LIGNE_COMMANDE
+            (IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT,
+             QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
-            st.setInt(2, idLigne);
+            st.setInt(2, num);
             st.setInt(3, l.idProduit);
             st.setDouble(4, l.quantite);
             st.setString(5, l.unite);
-            st.setDouble(6, prixUnitaire); // Prix unitaire calculé par le Service
-            st.setDouble(7, sousTotal); // Sous-total calculé par le Service
+            st.setDouble(6, prixUnitaire);
+            st.setDouble(7, sousTotal);
             st.executeUpdate();
         }
     }
-
+    
     /**
-     * Enregistre le mode de récupération (Retrait ou Livraison).
-     * CORRECTION : Ajout de l'IDADRESSE = 1 dans LIVRAISON_DOMICILE pour les tests.
+     * n recupere les lignes de commande pour un ID de commande donne.
      */
-    public void enregistrerModeRecuperation(int idCommande, String mode) throws SQLException {
+    public List<Ligne> getLignesCommande(int idCommande) throws SQLException {
+        List<Ligne> lignes = new ArrayList<>();
+        String sql = """
+            SELECT IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE
+            FROM LIGNE_COMMANDE
+            WHERE IDCOMMANDE = ? AND IDPRODUIT IS NOT NULL
+        """;
+        String sqlFinal = """
+            SELECT IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE
+            FROM LIGNE_COMMANDE
+            WHERE IDCOMMANDE = ? AND IDPRODUIT <> 999
+        """;
+        try (PreparedStatement st = db.prepare(sqlFinal)) {
+            st.setInt(1, idCommande);
+            try (ResultSet rs = st.executeQuery()) {
+                while (rs.next()) {
+                    lignes.add(new Ligne(rs.getInt(1), rs.getDouble(2), rs.getString(3)));
+                }
+            }
+        }
+        return lignes;
+    }
 
-        if (mode.equals("Retrait")) {
-            // IDRETRAITBOUTIQUE = IDCOMMANDE est une convention courante si l'ID est unique
-            String sql = "INSERT INTO retrait_boutique(idretraitboutique, idcommande) VALUES (?, ?)";
+    // Mode de recuperation
+    public void enregistrerModeRecuperation(int idCommande, String mode) throws SQLException {
+        if (mode.equalsIgnoreCase("Retrait")) {
+            String sql = "INSERT INTO RETRAIT_BOUTIQUE(idretraitboutique,idcommande) VALUES (?,?)";
             try (PreparedStatement st = db.prepare(sql)) {
-                st.setInt(1, idCommande); 
+                st.setInt(1, idCommande);
                 st.setInt(2, idCommande);
                 st.executeUpdate();
             }
         } else {
-            // Livraison : Ajout de IDADRESSE = 1 pour permettre la jointure avec la table ADRESSE.
-            String sql = "INSERT INTO livraison_domicile(idlivraisondomicile, idcommande, fraislivraison, idadresse) VALUES (?, ?, 5, 1)";
+            String sql = """
+                INSERT INTO LIVRAISON_DOMICILE(idlivraisondomicile,idcommande,fraislivraison,idadresse)
+                VALUES (?, ?, 5, 1)
+            """;
             try (PreparedStatement st = db.prepare(sql)) {
                 st.setInt(1, idCommande);
                 st.setInt(2, idCommande);
@@ -251,38 +265,83 @@ public class Dao {
         }
     }
 
-    // --- DÉSTOCKAGE F1/F3 ---
+    // Les Contenants
+    public List<String[]> getContenantsCompatibles(double quantite) throws SQLException {
+        String sql = """
+            SELECT IDCONTENANT, CAPACCONTENANT, TYPECONTENANT, STOCKDISPOCONTENANT
+            FROM CONTENANT
+            WHERE CAPACCONTENANT >= ? AND STOCKDISPOCONTENANT > 0
+            ORDER BY CAPACCONTENANT
+        """;
+        PreparedStatement st = db.prepare(sql);
+        st.setDouble(1, quantite);
+
+        ResultSet rs = st.executeQuery();
+
+        List<String[]> out = new ArrayList<>();
+        while (rs.next()) {
+            out.add(new String[]{
+                String.valueOf(rs.getInt(1)),                 
+                String.valueOf(rs.getDouble(2)),              
+                rs.getString(3)                      
+            });
+        }
+        return out;
+    }
+    
+    /**
+     * Ajoute un contenant à la commande.
+     */
+    public void ajouterContenantALaCommande(int idCommande, int idContenant, int numLigne) throws SQLException {
+        String sql1 = """
+            INSERT INTO LIGNE_COMMANDE
+            (IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE)
+            VALUES (?,?, 999,1,'Unite')
+        """;
+        try (PreparedStatement st = db.prepare(sql1)) {
+            st.setInt(1, idCommande);
+            st.setInt(2, numLigne); 
+            st.executeUpdate();
+        }
+        // Getion du stock
+        String sql2 = """
+            UPDATE CONTENANT SET STOCKDISPOCONTENANT = STOCKDISPOCONTENANT - 1
+            WHERE IDCONTENANT = ?
+        """;
+        try (PreparedStatement st2 = db.prepare(sql2)) {
+            st2.setInt(1, idContenant);
+            st2.executeUpdate();
+        }
+    }
+
+    // STOCK 
 
     /**
-     * Récupère la liste des lots disponibles pour un produit, triés selon la règle FIFO/FEFO.
+     * On Recupere les lots disponibles pour un produit.
+     * On Filtre les lots perimes et soustrait les quantites reservees (RESERVATION_STOCK).
      */
     public List<LotInfo> getStockLotsProduit(int idProduit) throws SQLException {
         List<LotInfo> lots = new ArrayList<>();
-        // Tri FEFO (DATEPEREMPTION ASC) puis FIFO (DATERECEPTION ASC)
         String sql = """
-            SELECT IDLOTPRODUIT, QUANTITESTOCKLOT
-            FROM LOT_PRODUIT
-            WHERE IDPRODUIT = ? AND QUANTITESTOCKLOT > 0
-            ORDER BY DATEPEREMPTION ASC, DATERECEPTION ASC
+            SELECT LP.IDLOTPRODUIT,(LP.QUANTITESTOCKLOT - COALESCE(SUM(RS.QUANTITE), 0)) AS STOCK_DISPONIBLE
+            FROM LOT_P LEFT JOIN LP.IDPRODUIT = ? AND (LP.DATEPEREMPTION IS NULL OR LP.DATEPEREMPTION > SYSDATE) 
+            GROUP BY LP.IDLOTPRODUIT, LP.QUANTITESTOCKLOT, LP.DATION
+            HAVING (LP.QUANTITESTOCKLOT - COALESCE(SUM(RS.QUANTITE), 0)) > 0
+            ORDER BY LP.DATEPEREMPTION ASC, LP.DATERECEPTION ASC 
         """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idProduit);
             try (ResultSet rs = st.executeQuery()) {
-                while (rs.next()) {
+                while (rs.next())
                     lots.add(new LotInfo(rs.getInt(1), rs.getDouble(2)));
-                }
             }
         }
         return lots;
     }
-
-    /**
-     * Déduit la quantité spécifiée du stock d'un lot donné.
-     */
     public void updateStockLot(int idLot, double quantitePrise) throws SQLException {
         String sql = """
-            UPDATE LOT_PRODUIT 
-            SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - ? 
+            UPDATE LOT_PRODUIT
+            SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - ?
             WHERE IDLOTPRODUIT = ?
         """;
         try (PreparedStatement st = db.prepare(sql)) {
@@ -292,17 +351,11 @@ public class Dao {
         }
     }
 
-    // =============================================================
-    // FONCTIONNALITÉ F2 : ALERTES & AJUSTEMENT PRIX
-    // =============================================================
-
-    /**
-     * Récupère les lots qui périment ou atteignent la DLUO dans les 7 jours.
-     */
+    // Les Alertes (fonctionnalite 2)
     public List<String> getAlertes() throws SQLException {
         List<String> out = new ArrayList<>();
         String sql = """
-            SELECT lp.IDLOTPRODUIT, p.NOMPRODUIT, lp.QUANTITESTOCKLOT, lp.UNITESTOCKLOT, lp.DATEPEREMPTION
+            SELECT lp.IDLOTPRODUIT, p.NOMPRODUIT, lp.QUANTITESTOCKLOT, lp.DATEPEREMPTION
             FROM LOT_PRODUIT lp
             JOIN PRODUIT p ON lp.IDPRODUIT = p.IDPRODUIT
             WHERE lp.DATEPEREMPTION BETWEEN SYSDATE AND SYSDATE + 7
@@ -311,43 +364,33 @@ public class Dao {
         try (PreparedStatement st = db.prepare(sql);
              ResultSet rs = st.executeQuery()) {
             while (rs.next()) {
-                out.add(
-                    "Lot ID " + rs.getInt(1) + 
-                    " - " + rs.getString(2) + 
-                    " : " + rs.getDouble(3) + " " + rs.getString(4) +
-                    " - Expire le " + rs.getDate(5)
-                );
+                out.add("Lot " + rs.getInt(1) +
+                        " - " + rs.getString(2) +
+                        " : " + rs.getDouble(3) + " unites" +
+                        " - expire le " + rs.getDate(4));
             }
         }
         return out;
     }
 
-    /**
-     * Récupère les ID des produits Vrac ayant des lots expirant dans les 7 jours.
-     */
     public List<Integer> getProduitsAjuster() throws SQLException {
         List<Integer> out = new ArrayList<>();
         String sql = """
             SELECT DISTINCT IDPRODUIT
-            FROM LOT_PRODUIT 
+            FROM LOT_PRODUIT
             WHERE DATEPEREMPTION BETWEEN SYSDATE AND SYSDATE + 7
         """;
         try (PreparedStatement st = db.prepare(sql);
              ResultSet rs = st.executeQuery()) {
-            while (rs.next()) {
+            while (rs.next())
                 out.add(rs.getInt(1));
-            }
         }
         return out;
     }
-
-    /**
-     * Applique une réduction en pourcentage au PRIXVENTEVRAC du produit.
-     */
     public void updatePrixVrac(int idProduit, int pourcentage) throws SQLException {
         String sql = """
-            UPDATE VRAC 
-            SET PRIXVENTEVRAC = PRIXVENTEVRAC * (1 - (? / 100.0)) 
+            UPDATE VRAC
+            SET PRIXVENTEVRAC = PRIXVENTEVRAC * (1 - (? / 100.0))
             WHERE IDPRODUIT = ?
         """;
         try (PreparedStatement st = db.prepare(sql)) {
@@ -356,111 +399,65 @@ public class Dao {
             st.executeUpdate();
         }
     }
-
-    // =============================================================
-    // FONCTIONNALITÉ F3 : CLÔTURE & DÉSTOCKAGE (simplifié)
-    // =============================================================
-
-    /**
-     * Verrouille la commande (SELECT FOR UPDATE) et récupère son statut actuel.
-     */
+    // La cloture ( fonctionnalite3)
     public String getStatutEtVerrouillerCommande(int idCommande) throws SQLException {
-        String statut = null;
-        String sql = "SELECT STATUT FROM COMMANDE WHERE IDCOMMANDE = ? FOR UPDATE";
+        String sql = "SELECT STATUT FROM COMMANDE WHERE IDCOMMANDE=? FOR UPDATE";
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    statut = rs.getString(1);
-                } else {
-                    throw new SQLException("Commande ID " + idCommande + " non trouvée.");
-                }
+                if (rs.next()) return rs.getString(1);
+                throw new SQLException("Commande " + idCommande + " introuvable.");
             }
         }
-        return statut;
     }
-    
-    /**
-     * Récupère le mode de récupération ('Retrait' ou 'Livraison') et le mode de paiement.
-     * @return Un tableau de String {modeRecuperation, modePaiement}.
-     */
+
+
+    // Paiement
     public String[] getModeRecupAndPaiement(int idCommande) throws SQLException {
-    
-        // 1. Récupérer le mode de paiement depuis COMMANDE
-        String modePaiement = null;
-        String sqlPaiement = "SELECT MODEPAIEMENT FROM COMMANDE WHERE IDCOMMANDE = ?";
-        try (PreparedStatement st = db.prepare(sqlPaiement)) {
+        String paiement = null;
+        String sql1 = "SELECT MODEPAIEMENT FROM COMMANDE WHERE IDCOMMANDE=?";
+        try (PreparedStatement st = db.prepare(sql1)) {
             st.setInt(1, idCommande);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    modePaiement = rs.getString(1);
-                }
+                if (rs.next()) paiement = rs.getString(1);
             }
         }
-    
-        if (modePaiement == null) {
-            throw new SQLException("Commande ID " + idCommande + " non trouvée ou sans mode de paiement.");
-        }
-
-        // 2. Déterminer le mode de récupération (Retrait ou Livraison)
-        String modeRecuperation = null;
-    
-        // Vérifier Retrait
-        String sqlRetrait = "SELECT IDCOMMANDE FROM RETRAIT_BOUTIQUE WHERE IDCOMMANDE = ?";
-        try (PreparedStatement st = db.prepare(sqlRetrait)) {
+        if (paiement == null)
+            throw new SQLException("Choisissez soit Retrait soit Livraison pour commande " + idCommande);
+        String recup = null;
+        String sqlR = "SELECT 1 FROM RETRAIT_BOUTIQUE WHERE IDCOMMANDE=?";
+        try (PreparedStatement st = db.prepare(sqlR)) {
             st.setInt(1, idCommande);
-            if (st.executeQuery().next()) {
-                modeRecuperation = "Retrait";
-            }
+            if (st.executeQuery().next()) recup = "Retrait";
         }
-    
-        // Si ce n'est pas Retrait, vérifier Livraison
-        if (modeRecuperation == null) {
-            String sqlLivraison = "SELECT IDCOMMANDE FROM LIVRAISON_DOMICILE WHERE IDCOMMANDE = ?";
-            try (PreparedStatement st = db.prepare(sqlLivraison)) {
+        if (recup == null) {
+            String sqlL = "SELECT 1 FROM LIVRAISON_DOMICILE WHERE IDCOMMANDE=?";
+            try (PreparedStatement st = db.prepare(sqlL)) {
                 st.setInt(1, idCommande);
-                if (st.executeQuery().next()) {
-                    modeRecuperation = "Livraison";
-                }
+                if (st.executeQuery().next()) recup = "Livraison";
             }
         }
+        if (recup == null)
+            throw new SQLException("Mode récupération introuvable.");
 
-        if (modeRecuperation == null) {
-             throw new SQLException("Mode de récupération inconnu pour la commande " + idCommande);
-        }
-
-        return new String[]{modeRecuperation, modePaiement};
+        return new String[]{recup, paiement};
     }
-    
-    /**
-     * Enregistre la date effective de récupération/livraison dans la table de détail correspondante.
-     */
-    public void enregistrerDateRecup(int idCommande, String modeRecuperation) throws SQLException {
-        String sqlDetail;
 
-        if ("Retrait".equals(modeRecuperation)) {
-            sqlDetail = "UPDATE RETRAIT_BOUTIQUE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
-        } else if ("Livraison".equals(modeRecuperation)) {
-            sqlDetail = "UPDATE LIVRAISON_DOMICILE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = ?";
-        } else {
-            throw new SQLException("Mode de récupération invalide: " + modeRecuperation);
-        } 
+    public void enregistrerDateRecup(int idCommande, String mode) throws SQLException {
+        String sql = mode.equalsIgnoreCase("Retrait")
+                ? "UPDATE RETRAIT_BOUTIQUE SET DATEREELLE=SYSDATE WHERE IDCOMMANDE=?"
+                : "UPDATE LIVRAISON_DOMICILE SET DATEREELLE=SYSDATE WHERE IDCOMMANDE=?";
 
-        try (PreparedStatement st = db.prepare(sqlDetail)) {
+        try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
-            int rows = st.executeUpdate();
-            
-            if (rows == 0) {
-                throw new SQLException("Aucune ligne de détail mise à jour pour la commande ID " + idCommande);
-            }
+            if (st.executeUpdate() == 0)
+                throw new SQLException("Aucune date mise à jour.");
         }
     }
-    
-    /**
-     * Met à jour le statut d'une commande.
-     */
+
     public void updateStatutCommande(int idCommande, String statut) throws SQLException {
-        String sql = "UPDATE COMMANDE SET STATUT = ? WHERE IDCOMMANDE = ?";
+        String sql = "UPDATE COMMANDE SET STATUT=? WHERE IDCOMMANDE=?";
+
         try (PreparedStatement st = db.prepare(sql)) {
             st.setString(1, statut);
             st.setInt(2, idCommande);
@@ -468,91 +465,77 @@ public class Dao {
         }
     }
 
-    // =============================================================
-    // MÉTHODES DAO POUR CALCUL LIVRAISON (F1)
-    // =============================================================
-
-    /**
-     * Calcule le poids total (en Kg) d'une commande en sommant les quantités des lignes.
-     */
-    public double calculerPoidsTotalCommande(int idCommande) throws SQLException {
-        String sql = """
-            SELECT SUM(QUANTITECOMMANDE) 
-            FROM LIGNE_COMMANDE 
-            WHERE IDCOMMANDE = ? 
-            AND UNITECOMMANDE = 'Kg'
-            """; 
-
-        try (PreparedStatement st = db.prepare(sql)) {
-            st.setInt(1, idCommande);
-            try (ResultSet rs = st.executeQuery()) {
-                // Retourne 0 si la somme est NULL (pas de Kg)
-                return rs.next() ? rs.getDouble(1) : 0.0; 
-            }
-        }
-    }
-
-    /**
-     * Récupère le PAYS de livraison pour la commande spécifiée.
-     */
+    // ADRESSES / LIVRAISON
     public String getPaysLivraison(int idCommande) throws SQLException {
         String sql = """
-            SELECT A.PAYS 
-            FROM LIVRAISON_DOMICILE LD
-            JOIN ADRESSE A ON LD.IDADRESSE = A.IDADRESSE
-            WHERE LD.IDCOMMANDE = ?
-            """;
+            SELECT A.PAYS
+            FROM LIVRAISON_DOMICILE L
+            JOIN ADRESSE A ON L.IDADRESSE = A.IDADRESSE
+            WHERE L.IDCOMMANDE=?
+        """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("PAYS");
-                }
+                if (rs.next()) return rs.getString(1);
             }
         }
-        throw new SQLException("Impossible de trouver le pays : la commande " + idCommande + " n'est pas une livraison à domicile.");
+        throw new SQLException("Pays introuvable.");
     }
 
-    /**
-     * Récupère la ville associée à l'adresse de livraison d'une commande.
-     */
     public String getVilleLivraison(int idCommande) throws SQLException {
         String sql = """
-            SELECT A.VILLE 
-            FROM LIVRAISON_DOMICILE LD
-            JOIN ADRESSE A ON LD.IDADRESSE = A.IDADRESSE
-            WHERE LD.IDCOMMANDE = ?
-            """; 
-
+            SELECT A.VILLE
+            FROM LIVRAISON_DOMICILE L
+            JOIN ADRESSE A ON L.IDADRESSE = A.IDADRESSE
+            WHERE L.IDCOMMANDE=?
+        """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) {
-                    return rs.getString("VILLE").toUpperCase(); 
-                } 
-                return null;
+                if (rs.next()) return rs.getString(1);
             }
+        }
+        throw new SQLException("Ville introuvable.");
+    }
+
+    public void updateFraisEtDateLivraison(int idCommande,
+                                           double frais,
+                                           java.util.Date dateEstimee) throws SQLException {
+        String sql = """
+            UPDATE LIVRAISON_DOMICILE
+            SET FRAISLIVRAISON=?, DATELIVRAISONESTIMEE=?
+            WHERE IDCOMMANDE=?
+        """;
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setDouble(1, frais);
+            st.setDate(2, new java.sql.Date(dateEstimee.getTime()));
+            st.setInt(3, idCommande);
+            st.executeUpdate();
         }
     }
 
+    // STOCK TOTAL
     /**
-     * Met à jour les frais et la date de livraison estimée dans LIVRAISON_DOMICILE.
+     * Recupere le stock total disponible d'un produit.
+     * Le stock physique est soustrait des reservations et les lots perimes sont exclus.
      */
-    public void updateFraisEtDateLivraison(int idCommande, double fraisLivraison, java.util.Date dateEstimee) throws SQLException {
+    public double getStockTotalProduit(int idProduit) throws SQLException {
         String sql = """
-            UPDATE LIVRAISON_DOMICILE 
-            SET FRAISLIVRAISON = ?, DATELIVRAISONESTIMEE = ? 
-            WHERE IDCOMMANDE = ?
-            """;
+            SELECT
+                COALESCE(SUM(LP.QUANTITESTOCKLOT), 0) - COALESCE(SUM(RS.QUANTITE), 0)
+            FROM
+                LOT_PRODUIT LP
+            LEFT JOIN
+                RESERVATION_STOCK RS ON LP.IDLOTPRODUIT = RS.IDLOTPRODUIT
+            WHERE
+                LP.IDPRODUIT = ?
+                AND (LP.DATEPEREMPTION IS NULL OR LP.DATEPEREMPTION > SYSDATE) 
+        """;
         try (PreparedStatement st = db.prepare(sql)) {
-            // 1. Les frais
-            st.setDouble(1, fraisLivraison);
-            // 2. La date estimée (conversion de java.util.Date à java.sql.Date)
-            st.setDate(2, new java.sql.Date(dateEstimee.getTime())); 
-            // 3. L'ID de la commande
-            st.setInt(3, idCommande);
-            
-            st.executeUpdate();
+            st.setInt(1, idProduit);
+            try (ResultSet rs = st.executeQuery()) {
+                return rs.next() ? rs.getDouble(1) : 0.0;
+            }
         }
     }
 }

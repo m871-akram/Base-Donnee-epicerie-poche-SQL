@@ -1,66 +1,95 @@
 import java.util.*;
 
 /**
- * Interface utilisateur (console interactive).
- * Affiche le menu, lit les entrées clavier et appelle le Service.
+ * Interface utilisateur pour l'intéraction soit avec l'épicié ou le client.
  */
 public class Menu {
 
-    // Référence vers le Service pour appeler la logique métier
+    // Référence vers le Service 
     private final Service service;
-    // Scanner pour lire les entrées clavier de l'utilisateur
     private final Scanner sc = new Scanner(System.in);
 
-    /**
-     * Constructeur : reçoit le Service par injection de dépendance.
-     */
     public Menu(Service service) {
         this.service = service;
     }
 
     /**
-     * Lance le menu interactif (boucle infinie).
+     * Lance le menu interactif (boucle .
      */
     public void start() {
-
         while (true) {
-            // Afficher le menu principal
-            System.out.println("\n--- MENU ---");
-            System.out.println("1. Afficher catalogue");
-            System.out.println("2. Passer commande (F1: Création + Vérifications + Déstockage)"); // F1 complète
-            System.out.println("3. Ajuster prix péremption (F2: Transaction d'ajustement)");
-            System.out.println("4. Clôturer commande (F3: Mise à jour statut uniquement)"); // F3 simplifiée
-            System.out.println("0. Quitter");
+            System.out.println("\n BIENVENUE à l'épicerie 'LE BON CHOIX'");
+            System.out.println("1. Entrer en tant que client");
+            System.out.println("2. Entrer en tant qu'épicier");
+            System.out.println("0. Quitter le menu");
             System.out.print("Choix : ");
 
-            // Lire le choix de l'utilisateur
             try {
                 int c = Integer.parseInt(sc.nextLine());
-
-                // Appeler la bonne méthode selon le choix
                 switch (c) {
-                    case 1 -> afficherCatalogue();
-                    case 2 -> passerCommande();
-                    case 3 -> ajusterPrixEtAfficherAlertes(); // F2
-                    case 4 -> cloturerCommande(); // F3
-                    case 0 -> {
-                        System.out.println("Au revoir !");
-                        return; // Quitter la boucle et le programme
-                    }
+                    case 1 -> startClientLoop();
+                    case 2 -> startEpicierLoop();
+                    case 0 -> { System.out.println("Au revoir !"); return; }
                     default -> System.out.println("Choix invalide.");
                 }
-            } catch (NumberFormatException e) {
-                System.out.println("Veuillez entrer un nombre valide.");
             } catch (Exception e) {
-                System.out.println("Erreur fatale : " + e.getMessage());
+                System.out.println("Erreur : " + e.getMessage());
             }
         }
     }
 
-    // -------------------------------------------------------------
-    // --- LOGIQUE F1 (Affichage simple) ---------------------------
-    // -------------------------------------------------------------
+    
+    // Partie du client
+    public void startClientLoop() {
+        while (true) {
+            System.out.println("\n --- MENU DU CLIENT ---");
+            System.out.println("1. Afficher catalogue des produits");
+            System.out.println("2. Passer une commande");
+            System.out.println("0. Retour");
+            System.out.print("Choix : ");
 
+            try {
+                int c = Integer.parseInt(sc.nextLine());
+                switch (c) {
+                    case 1 -> afficherCatalogue();
+                    case 2 -> passerCommande();
+                    case 0 -> { return; }
+                    default -> System.out.println("Choix invalide.");
+                }
+            } catch (Exception e) {
+                System.out.println("Erreur : " + e.getMessage());
+            }
+        }
+    }
+
+    // =============================================================
+    // EPICIER LOOP
+    // =============================================================
+
+    public void startEpicierLoop() {
+        while (true) {
+            System.out.println("\n--- MENU DE L'ÉPICIER ---");
+            System.out.println("1. Ajuster prix péremption ");
+            System.out.println("2. Clôturer commande");
+            System.out.println("0. Retour");
+            System.out.print("Choix : ");
+
+            try {
+                int c = Integer.parseInt(sc.nextLine());
+                switch (c) {
+                    case 1 -> ajusterPrixEtAfficherAlertes();
+                    case 2 -> cloturerCommande();
+                    case 0 -> { return; }
+                    default -> System.out.println("Choix invalide.");
+                }
+            } catch (Exception e) {
+                System.out.println("Erreur : " + e.getMessage());
+            }
+        }
+    }
+
+    
+    // Fonctionnalité 1: Gestion du catalogue
     private void afficherCatalogue() {
         try {
             System.out.println("\n--- CATALOGUE ---");
@@ -70,114 +99,110 @@ public class Menu {
         }
     }
 
-    // -------------------------------------------------------------
-    // --- LOGIQUE F1 (Transaction complète) -----------------------
-    // -------------------------------------------------------------
-
-    /**
-     * Option 2 : Passe une commande. Le Service gère la vérification (stock/saison),
-     * le calcul des prix, la création des lignes et le DÉSTOCKAGE (FIFO) dans une seule transaction.
-     */
+    // Fonctionnalité 1 : passer la commande
     private void passerCommande() {
         try {
             int idClient = service.verifierOuCreerClient();
-
-            System.out.print("Mode récupération (Retrait/Livraison) : ");
-            String modeRecuperation = sc.nextLine();
-
-            // Lecture du mode de paiement pour la COMMANDE
-            System.out.print("Mode paiement (EN LIGNE/EN BOUTIQUE) : ");
-            String modePaiement = sc.nextLine();
-
-            // Saisie des lignes de commande
-            List<Ligne> lignes = new ArrayList<>();
-            System.out.println("\n--- AJOUT DES PRODUITS ---");
-
-            while (true) {
-                System.out.print("ID produit (0 pour terminer) : ");
-                int p = Integer.parseInt(sc.nextLine());
-                if (p == 0) break;
-
-                System.out.print("Quantité : ");
-                double q = Double.parseDouble(sc.nextLine());
-
-                System.out.print("Unité (Kg/Unité) : ");
-                String u = sc.nextLine();
-
-                // Supposons que Ligne(int, double, String) est le constructeur correct.
-                lignes.add(new Ligne(p, q, u)); 
+            // Mode de récuprération
+            System.out.print("Mode récupération (Retrait / Livraison) : ");
+            String modeRecuperation = sc.nextLine().trim();
+            if (!modeRecuperation.equalsIgnoreCase("Retrait") &&
+                !modeRecuperation.equalsIgnoreCase("Livraison")) {
+                System.out.println("Mode invalide.");
+                return;
             }
 
-            // Appeler le Service pour créer la commande (transaction complète F1)
-            // LIGNE CORRIGÉE : Récupération de l'objet ResultatCommande
-            Service.ResultatCommande resultat = service.passerCommande(idClient, modeRecuperation, modePaiement, lignes);
-            
-            // Affichage mis à jour pour afficher l'ID et le montant total
-            System.out.println("\n✅ Commande créée avec succès !");
-            System.out.println("ID Commande: " + resultat.idCommande);
-            System.out.println("Montant total à payer (incl. frais): " + String.format("%.2f", resultat.montantTotal) + "€");
-            System.out.println("Stock déduit.");
+            // Mode de paiement
+            System.out.print("Mode paiement (EN LIGNE / EN BOUTIQUE) : ");
+            String modePaiement = sc.nextLine().trim();
+            // Adresse pour livraison
+            int idAdresse = -1;
+            if (modeRecuperation.equalsIgnoreCase("Livraison")) {
+                idAdresse = service.demanderAdresse(idClient);
+                System.out.println("Adresse sélectionnée : " + idAdresse);
+            }
+            // 
+            List<Ligne> lignes = new ArrayList<>();
+            System.out.println("\n--- AJOUTER AU PANIER ---");
+            while (true) {
+                System.out.print("rentrer l'ID du produit que vous voulez ( rentrer 0 pour terminer) : ");
+                int p = Integer.parseInt(sc.nextLine());
+                if (p == 0) break;
+                String type = service.getTypeCondProduit(p);
+                String unite = type.equals("VRAC") ? "Kg" : "Unite";
 
+                // Quantité
+                System.out.print("Quantité (" + unite + ") : ");
+                double q = Double.parseDouble(sc.nextLine());
+                // Gestion Vrac
+                if (type.equals("VRAC")) {
+                    System.out.println("Pour les produits de type VRAC l'unité imposée est Kg");
+                    System.out.print("Ce produit est en VRAC. Voulez-vous ajouter un contenant ?  (O/N) : ");
+                    String rep = sc.nextLine();
+                    if (rep.equalsIgnoreCase("O")) {
+                        List<String[]> contenants = service.getContenantsCompatibles(q);
+                        if (contenants.isEmpty()) {
+                            System.out.println("Aucun contenant compatible disponible !");
+                        } else {
+                            System.out.println("Choisissez un contenant :");
+                            for (int j = 0; j < contenants.size(); j++) {
+                                String[] c = contenants.get(j);
+                                System.out.println((j + 1) + ". " + c[2] + " (" + c[1] + " Kg)");
+                            }
+                            System.out.print("Votre choix : ");
+                            int choix = Integer.parseInt(sc.nextLine());
+                            int idContenant = Integer.parseInt(contenants.get(choix - 1)[0]);
+                            // Sera traité dans Service après l'insertion de la commande
+                            lignes.add(new Ligne(-1, 1, "CONTENANT_" + idContenant));
+                        }
+                    }
+                }
+                else {
+                    System.out.println("Pour les produit de type PRECOND l'unité imposée est Unité");
+                }
+                lignes.add(new Ligne(p, q, unite));
+            }
 
+            // Validation de la commande
+            Service.ResultatCommande res = service.passerCommande(
+                    idClient, modeRecuperation, modePaiement, lignes
+            );
+            System.out.println("\n Votre Commande a été créée avec succès ");
+            System.out.println("L'ID de votre Commande est  : " + res.idCommande);
+            System.out.println("Le montant total est : " + String.format("%.2f", res.montantTotal) + " euros");
         } catch (Exception e) {
-            // Affiche l'erreur du Service (ex : Stock insuffisant, Produit hors saison)
-            System.out.println(" Erreur lors de la création de la commande : " + e.getMessage());
+            System.out.println("Erreur commande : " + e.getMessage());
         }
     }
 
-    // -------------------------------------------------------------
-    // --- LOGIQUE F2 (Transaction Ajustement Prix) ----------------
-    // -------------------------------------------------------------
-
-    /**
-     * Option 3 : Affiche les alertes de péremption ET demande d'ajuster les prix (Transaction F2).
-     */
+    // Fonctionnalité 2 : ajustement des prix 
     private void ajusterPrixEtAfficherAlertes() {
         try {
-            // 1. Afficher d'abord les alertes pour information
-            System.out.println("\n--- ALERTES PÉREMPTION (Lots expirant J+7) ---");
+            System.out.println("\n--- ALERTES DES DES DATES DE PEREMPTION ---");
             List<String> alertes = service.getAlertes();
             if (alertes.isEmpty()) {
-                System.out.println("Aucun produit n'est proche de la péremption.");
+                System.out.println("Aucune alerte.");
                 return;
             }
             alertes.forEach(System.out::println);
-            
-            // 2. Demander le pourcentage pour l'ajustement
-            System.out.print("\nEntrez le pourcentage de réduction à appliquer (ex: 30) : ");
-            int pourcentage = Integer.parseInt(sc.nextLine());
-
-            // 3. Appeler la transaction du Service
-            int count = service.ajusterPrixPeremption(pourcentage);
-
-            System.out.println("\n " + count + " prix de produits ajustés de " + pourcentage + "%.");
-
+            System.out.print("Pourcentage de réduction : ");
+            int pct = Integer.parseInt(sc.nextLine());
+            int count = service.ajusterPrixPeremption(pct);
+            System.out.println(count + " produits ajustés.");
         } catch (Exception e) {
-            System.out.println(" Erreur lors de l'ajustement des prix : " + e.getMessage());
+            System.out.println("Erreur d'ajustement : " + e.getMessage());
         }
     }
 
-    // -------------------------------------------------------------
-    // --- LOGIQUE F3 (Transaction Clôture de Statut) --------------
-    // -------------------------------------------------------------
-
-    /**
-     * Option 4 : Clôturer une commande. Mise à jour du statut. 
-     */
+    // Fonctionnalite 3: Clôturer commande 
     private void cloturerCommande() {
         try {
-            System.out.print("ID commande à clôturer (statut 'En préparation' requis) : ");
+            System.out.print("ID commande : ");
             int id = Integer.parseInt(sc.nextLine());
-            
-            // Le Service gère le verrouillage et le changement de statut.
-            service.cloturerCommande(id); 
-            
-            // Affichage mis à jour pour refléter que le déstockage est fait ailleurs
-            System.out.println("\n Commande ID " + id + " mise à jour au statut 'Livrée'.");
-            
+            service.cloturerCommande(id);
+            System.out.println("Waaw, Commande clôturée.");
         } catch (Exception e) {
-            // L'erreur vient du Service (commande déjà traitée, etc.)
-            System.out.println(" Erreur lors de la clôture : " + e.getMessage());
+            System.out.println("Erreur de Clôture  : " + e.getMessage());
         }
     }
 }

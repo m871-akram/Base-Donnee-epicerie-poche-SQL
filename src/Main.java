@@ -3,21 +3,16 @@
  * Configure et connecte tous les composants du système.
  */
 public class Main {
-
     public static void main(String[] args) {
-
         try {
             // Étape 1 : Créer la connexion à Oracle (JDBC)
             // URL format : jdbc:oracle:thin:@host:port:sid
-            // À adapter selon ton environnement Oracle
             Database db = new Database(
                     "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1",
-                    "lrhorfim",
-                    "lrhorfim"
+                    "trombatm",
+                    "trombatm"
             );
-
-            // Étape 2 : Créer les objets en cascade (injection manuelle)
-            // Le Dao a besoin de Database pour exécuter du SQL
+            // Étape 2 : Créer les objets en cascade 
             Dao dao = new Dao(db);
             // Le Service a besoin de Database (pour commit/rollback) et du Dao (pour les requêtes)
             Service service = new Service(db, dao);
@@ -31,7 +26,7 @@ public class Main {
             db.close();
 
         } catch (Exception e) {
-            // Si erreur (connexion échouée, etc.), afficher la trace complète
+            // Si erreur, afficher la trace complète
             e.printStackTrace();
         }
     }

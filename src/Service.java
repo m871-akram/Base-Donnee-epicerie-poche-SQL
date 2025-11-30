@@ -1,18 +1,15 @@
 import java.sql.*;
 import java.util.*;
+import java.util.Date;
 
-/**
- * Couche métier (business logic).
- * Orchestre les appels au DAO et gère les transactions (commit/rollback).
- */
+/** Gère les appels des fonction de dao et gère les transactions*/
 public class Service {
 
-    // Références vers le DAO (pour les requêtes) et Database (pour commit/rollback)
+    // Références pour les requêtes et vers Database pour commit/rollback
     private final Dao dao;
     private final Database db;
 
-    /**
-     * Classe interne utilisée pour stocker temporairement une ligne de commande 
+    /**Classe interne utilisée pour stocker temporairement une ligne de commande 
      * avec les prix calculés avant l'insertion en base.
      */
     private static class LigneAvecPrix {
@@ -27,15 +24,16 @@ public class Service {
         }
     }
 
-    /**
-     * Constructeur : reçoit Database et Dao par injection de dépendance.
-     */
     public Service(Database db, Dao dao) {
         this.db = db;
         this.dao = dao;
     }
 
+    
+    // Gestion du client
 
+    /**  Gère la vérification d'un client existant ou la création d'un nouveau client.
+    */
     public int verifierOuCreerClient() throws Exception {
         Scanner sc = new Scanner(System.in);
 
@@ -43,7 +41,6 @@ public class Service {
         boolean nouveau = sc.nextLine().equalsIgnoreCase("O");
 
         if (!nouveau) {
-            // CLIENT EXISTANT
             System.out.print("ID client : ");
             int idClient = Integer.parseInt(sc.nextLine());
 
@@ -53,7 +50,6 @@ public class Service {
             return idClient;
         }
 
-        // NOUVEAU CLIENT
         System.out.print("Choisissez un ID client : ");
         int idClient = Integer.parseInt(sc.nextLine());
 
@@ -61,36 +57,26 @@ public class Service {
         boolean complet = sc.nextLine().equalsIgnoreCase("O");
 
         try {
+            // Ajout des nouveaux données du client
             dao.creerClient(idClient, !complet);
-
             if (complet) {
-                // Informations personnelles
                 System.out.print("Nom : ");
                 String nom = sc.nextLine();
-
                 System.out.print("Prénom : ");
                 String prenom = sc.nextLine();
-
                 System.out.print("Email : ");
                 String email = sc.nextLine();
-
                 System.out.print("Téléphone : ");
                 String tel = sc.nextLine();
-
                 dao.creerInfosClient(idClient, nom, prenom, email, tel);
-
-                // Adresse
                 int idAdresse = new Random().nextInt(10000);
-
                 System.out.print("Rue : ");
                 String rue = sc.nextLine();
-
                 System.out.print("Ville : ");
                 String ville = sc.nextLine();
-
                 System.out.print("Pays : ");
                 String pays = sc.nextLine();
-
+                //Création de l'adresse du client nécessaire pour la livraison
                 dao.creerAdresse(idAdresse, idClient, rue, ville, pays);
             }
 
@@ -103,317 +89,217 @@ public class Service {
         }
     }
 
-    // =============================================================
-    // FONCTIONNALITÉ F1 : CATALOGUE ET CRÉATION COMMANDE
-    // =============================================================
 
-    /**
-     * Délègue simplement au DAO (pas de logique métier ici).
-     */
+    // CATALOGUE
     public List<String> getCatalogue() throws Exception {
         return dao.getCatalogue();
     }
 
-    /**
-     * Passe une commande complète (transaction multi-étapes) - Fonctionnalité F1.
-     * @return Un objet ResultatCommande contenant l'ID de commande et le montant total final.
-     */
+
+    // Fonctionnalité 1: passer la commande
     public ResultatCommande passerCommande(int idClient, String mode, String modePaiement, List<Ligne> lignes) throws Exception {
         try {
-            // Étape 0 : VÉRIFICATION, CALCUL DE PRIX et PRÉPARATION DES DONNÉES
-            List<LigneAvecPrix> lignesPretes = new ArrayList<>();
-            double montantTotalCommandeValeur = 0.0; 
-
-            // Vérification que la liste de lignes n'est pas vide
-            if (lignes.isEmpty()) {
+            if (lignes.isEmpty())
                 throw new Exception("La commande ne contient aucun produit.");
-            }
-
-            for (Ligne l : lignes) {
-                //  Vérification de la saisonnalité
-                double stockTotal = dao.getStockTotalProduit(l.idProduit);
-                if (stockTotal < l.quantite) {
-                    throw new Exception("Stock insuffisant pour le produit ID " + l.idProduit + ". Requis: " + l.quantite + ", Disponible: " + stockTotal);
-                }
-                // 0.1. Vérification de la saisonnalité
-                if (!dao.estProduitEnSaison(l.idProduit)) {
-                    throw new Exception("Le produit ID " + l.idProduit + " n'est pas en saison.");
-                }
-
-                
-                
-                // 0.3. Calculer le prix unitaire (y compris prix réduit F2)
-                double prixUnitaire = dao.getPrixVente(l.idProduit);
-                double sousTotal = l.quantite * prixUnitaire;
-                montantTotalCommandeValeur += sousTotal; // Accumuler le sous-total de la commande
-                
-                lignesPretes.add(new LigneAvecPrix(l, prixUnitaire, sousTotal));
-            }
-            
-            // Étape 1 : Créer la commande et récupérer son ID
+            // Création commande
             int idCommande = dao.creerCommande(idClient, modePaiement);
+            List<LigneAvecPrix> lignesProduitsPourDestockage = new ArrayList<>();
+            double montantTotal = 0;
+            int numLigne = 1; 
+            //  Préparation et Insertion des lignes
+            for (Ligne l : lignes) {
+                // Le cas d'un  contenant
+                if (l.unite.startsWith("CONTENANT_")) {
+                    int idContenant = Integer.parseInt(l.unite.split("_")[1]);
+                    dao.ajouterContenantALaCommande(idCommande, idContenant, numLigne);
+                    numLigne++; 
+                    continue; 
+                }
 
-            // Étape 2 : Ajouter chaque ligne avec le prix calculé
-            int i = 1;
-            for (LigneAvecPrix l : lignesPretes) {
-                dao.ajouterLigneCommande(idCommande, l.ligne, i++, l.prixUnitaire, l.sousTotal);
+                // Cas d'un produit
+                // Vérification du stock et saison
+                double stockTotal = dao.getStockTotalProduit(l.idProduit);
+                if (stockTotal < l.quantite)
+                    throw new Exception("Stock insuffisant pour produit " + l.idProduit);
+                if (!dao.estProduitEnSaison(l.idProduit))
+                    throw new Exception("Produit " + l.idProduit + " hors saison.");
+                // Calcul du prix
+                double prixUnitaire = dao.getPrixVente(l.idProduit);
+                double sousTotal = prixUnitaire * l.quantite;
+                montantTotal += sousTotal;
+                // Insertion de la ligne produit
+                dao.ajouterLigneCommande(idCommande, l, numLigne, prixUnitaire, sousTotal);
+                numLigne++; 
+                
+                lignesProduitsPourDestockage.add(new LigneAvecPrix(l, prixUnitaire, sousTotal));
             }
 
-            // Étape 3 : Gérer le mode de récupération et les frais de livraison
+            // Mode récupération
             dao.enregistrerModeRecuperation(idCommande, mode);
-            
-            if (mode.equals("Livraison")) {
-                
-                // 3.1. Récupérer les données nécessaires au calcul (Appel au DAO)
+
+            // Livraison
+            if (mode.equalsIgnoreCase("Livraison")) {
                 String pays = dao.getPaysLivraison(idCommande);
                 String ville = dao.getVilleLivraison(idCommande);
-                double poidsTotal = dao.calculerPoidsTotalCommande(idCommande);
-                
-                // 3.2. Calculer les frais et la FDE (Appel aux fonctions Service)
+                double poidsTotal = calculerPoidsTotalCommande(idCommande);
                 double fraisLivraison = calculerFraisLivraison(pays, ville, poidsTotal);
-                java.util.Date dateEstimee = calculerDateLivraisonEstimee(pays, ville); 
-                
-                // 3.3. Mettre à jour la ligne LIVRAISON_DOMICILE dans la base (Appel au DAO)
+                Date dateEstimee = calculerDateLivraisonEstimee(pays, ville);
                 dao.updateFraisEtDateLivraison(idCommande, fraisLivraison, dateEstimee);
-                
-                // 3.4. Ajouter les frais au montant total
-                montantTotalCommandeValeur += fraisLivraison; 
-                
-                System.out.println("\n--- Livraison Calculée ---");
-                System.out.println("Frais de livraison appliqués: " + String.format("%.2f", fraisLivraison) + "€");
-                System.out.println("Date estimée: " + dateEstimee.toString());
-                System.out.println("--------------------------\n");
+                montantTotal += fraisLivraison;
             }
-            
-            // Étape 4 : GESTION DU STOCK (DÉSTOCKAGE FIFO)
-            for (LigneAvecPrix ligne : lignesPretes) {
-                double quantiteRequise = ligne.ligne.quantite;
 
-                // 4.1. Récupérer les lots disponibles pour ce produit (triés FIFO/FEFO)
-                List<Dao.LotInfo> lots = dao.getStockLotsProduit(ligne.ligne.idProduit);
-
-                // 4.2. Déstockage séquentiel (FIFO)
-                double resteADestocker = quantiteRequise;
+            // Déstockage produit 
+            for (LigneAvecPrix lp : lignesProduitsPourDestockage) {
+                double q = lp.ligne.quantite;
+                List<Dao.LotInfo> lots = dao.getStockLotsProduit(lp.ligne.idProduit);
                 for (Dao.LotInfo lot : lots) {
-                    if (resteADestocker <= 0) break; // Le besoin est satisfait
-
-                    double quantiteLot = lot.stockActuel;
-                    double quantitePrise = Math.min(resteADestocker, quantiteLot);
-
-                    // 4.3. Déduire du lot dans la base
-                    dao.updateStockLot(lot.idLot, quantitePrise);
-
-                    resteADestocker -= quantitePrise;
+                    if (q <= 0) break;
+                    double prendre = Math.min(q, lot.stockActuel);
+                    dao.updateStockLot(lot.idLot, prendre);
+                    q -= prendre;
                 }
             }
-            
-            // Étape 5 : La commande reste à 'En preparation' ou 'Prete'.
-
-            // Étape 6 : valider la transaction (tout est OK)
             db.commit();
-            
-            // Étape 7 : Retourner l'ID et le montant total final
-            return new ResultatCommande(idCommande, montantTotalCommandeValeur);
+            return new ResultatCommande(idCommande, montantTotal);
 
         } catch (Exception e) {
-            // En cas d'erreur (vérification échouée ou erreur SQL), annuler tous les changements
             db.rollback();
-            // Re-lancer l'exception avec un message clair pour le Menu
-            throw new Exception("Échec de la commande : " + e.getMessage()); 
+            throw new Exception("Échec de commande : " + e.getMessage());
         }
     }
 
+    // Contenants
+    public List<String[]> getContenantsCompatibles(double quantite) throws Exception {
+        return dao.getContenantsCompatibles(quantite);
+    }
+    public void ajouterContenantALaCommande(int idCommande, int idContenant, int numLigne) throws Exception {
+        dao.ajouterContenantALaCommande(idCommande, idContenant, numLigne);
+    }
 
-    // =============================================================
-    // FONCTIONNALITÉ F2 : ALERTES & AJUSTEMENT PRIX (Transaction)
-    // =============================================================
+    // Calculs du poids total pour livraison
+    public double calculerPoidsTotalCommande(int idCommande) throws SQLException {
+        double poids = 0;
+        List<Ligne> lignes = dao.getLignesCommande(idCommande);
+        for (Ligne l : lignes) {
+            if (l.unite.equalsIgnoreCase("Kg"))
+                poids += l.quantite;
+            else {
+                Double pf = dao.getPoidsFixe(l.idProduit);
+                if (pf != null)
+                    poids += pf * l.quantite;
+            }
+        }
+        return poids;
+    }
 
-    /**
-     * Délègue simplement au DAO pour les alertes (pas de transaction nécessaire).
-     */
+    public double calculerFraisLivraison(String pays, String ville, double poidsTotal) {
+        double fp = ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) ? 5 :
+                    (isDOMTOM(ville) ? 25 : 40);
+
+        double fd = (ville.equalsIgnoreCase("GRENOBLE") || ville.equalsIgnoreCase("SAINT-MARTIN-D'HERES")) ? 0 :
+                    (ville.equalsIgnoreCase("LYON") ? 5 : 10);
+
+        return fp + fd + 0.5 * poidsTotal;
+    }
+
+    public Date calculerDateLivraisonEstimee(String pays, String ville) {
+        Calendar cal = Calendar.getInstance();
+        cal.setTime(new Date());
+
+        int j = ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) ? 4 :
+                (isDOMTOM(ville) ? 11 : 16);
+
+        cal.add(Calendar.DAY_OF_YEAR, j);
+        return cal.getTime();
+    }
+
+    private boolean isDOMTOM(String ville) {
+        if (ville == null) return false;
+        ville = ville.toUpperCase();
+        return ville.contains("CAYENNE") || ville.contains("FORT-DE-FRANCE")
+                || ville.contains("PAPEETE") || ville.contains("MAMOUDZOU")
+                || ville.contains("LES ABYMES") || ville.contains("SAINT-DENIS")
+                || ville.contains("NOUMÉA");
+    }
+
+    // Fonctionnalité 2: ajustement des prix
+
     public List<String> getAlertes() throws Exception {
         return dao.getAlertes();
     }
 
-    /**
-     * Transaction complète pour ajuster les prix des produits proches de péremption (F2).
-     * @param pourcentage Le pourcentage de réduction (ex: 30 pour 30%).
-     * @return Le nombre de produits dont le prix a été ajusté.
-     */
     public int ajusterPrixPeremption(int pourcentage) throws Exception {
-        int count = 0;
         try {
-            // 1. Récupérer la liste des ID produits concernés (lots expirant à J+7)
             List<Integer> produits = dao.getProduitsAjuster();
-            
-            // 2. Appliquer la mise à jour pour chaque produit trouvé
-            for (int idProduit : produits) {
-                dao.updatePrixVrac(idProduit, pourcentage);
+            int count = 0;
+
+            for (int idP : produits) {
+                dao.updatePrixVrac(idP, pourcentage);
                 count++;
             }
 
-            // 3. Valider la transaction
             db.commit();
             return count;
 
         } catch (Exception e) {
-            // En cas d'erreur, annuler toutes les mises à jour de prix
             db.rollback();
-            throw new Exception("Échec de l'ajustement des prix : " + e.getMessage());
+            throw new Exception("Erreur F2 : " + e.getMessage());
         }
     }
 
-    // =============================================================
-    // FONCTIONNALITÉ F3 : CLÔTURE DE COMMANDE (SIMPLIFIÉE)
-    // =============================================================
-    
-    /**
-     * Clôture une commande. Cette version met à jour le statut
-     * de 'En preparation' à 'Livrée'.
-     */
+    // Fonctionnalité 3 : cloture de la commande
     public void cloturerCommande(int idCommande) throws Exception {
-    
-    // La transaction est gérée par le Service
-    db.setAutoCommit(false); 
+        db.setAutoCommit(false);
+        try {
+            String statut = dao.getStatutEtVerrouillerCommande(idCommande);
+            if (!statut.equals("En preparation"))
+                throw new Exception("Commande non clôturable : " + statut);
+            String[] modes = dao.getModeRecupAndPaiement(idCommande);
+            String modeRecup = modes[0];
+            String nouveauStatut = modeRecup.equals("Retrait") ? "Recupere" : "Livree";
+            dao.enregistrerDateRecup(idCommande, modeRecup);
+            dao.updateStatutCommande(idCommande, nouveauStatut);
+            db.commit();
 
-    try {
-        // 1. Verrouiller la commande et vérifier le statut
-        String statutActuel = dao.getStatutEtVerrouillerCommande(idCommande);
-        
-        if (!"En preparation".equals(statutActuel)) {
-            throw new Exception("La commande ID " + idCommande + " est déjà " + statutActuel + ". Ne peut être clôturée.");
+        } catch (Exception e) {
+            db.rollback();
+            throw new Exception("Erreur clôture : " + e.getMessage());
+        } finally {
+            db.setAutoCommit(true);
         }
-        
-        // 2. Récupérer les modes de récupération et de paiement
-        String[] modes = dao.getModeRecupAndPaiement(idCommande);
-        String modeRecuperation = modes[0];
-        String modePaiement = modes[1];
-        String statutFinal;
+    }
 
-        // 3. Logique métier F3
-        if ("Retrait".equals(modeRecuperation)) {
-            statutFinal = "Recupere";
-            
-            if ("EN BOUTIQUE".equals(modePaiement)) {
-                 // Étape Paiement en boutique : Si un enregistrement est nécessaire
-                 System.out.println("Paiement EN BOUTIQUE enregistré.");
-            }
-        
-        } else if ("Livraison".equals(modeRecuperation)) {
-            statutFinal = "Livree";
-            // NOTE : Les frais ont été calculés et stockés lors de F1.
-            System.out.println("Frais de livraison appliqués : Déjà enregistrés lors de la commande."); 
-        } else {
-            throw new Exception("Mode de récupération non pris en charge.");
+    
+    // Résultat de la commande
+    public class ResultatCommande {
+        public final int idCommande;
+        public final double montantTotal;
+
+        public ResultatCommande(int idCommande, double montantTotal) {
+            this.idCommande = idCommande;
+            this.montantTotal = montantTotal;
         }
-        
-        // 4. Mettre à jour la date effective de récupération/livraison
-        dao.enregistrerDateRecup(idCommande, modeRecuperation);
-
-        // 5. Mettre à jour le statut final
-        dao.updateStatutCommande(idCommande, statutFinal);
-
-        // 6. Valider la transaction
-        db.commit();
-        System.out.println("Clôture de la commande " + idCommande + " réussie. Nouveau statut : " + statutFinal);
-
-    } catch (Exception e) {
-        // En cas d'erreur, annuler tout
-        db.rollback();
-        throw new Exception("Échec de la clôture de la commande ID " + idCommande + " : " + e.getMessage());
-    } finally {
-        db.setAutoCommit(true); // Rétablir l'auto-commit
-    }
-}
-
-// =============================================================
-// LOGIQUE MÉTIER DE LIVRAISON (Nouvelles fonctions)
-// =============================================================
-
-/**
- * Calcule les frais de livraison basés sur le pays, la ville (zone) et le poids.
- */
-public double calculerFraisLivraison(String pays, String ville, double poidsTotal) throws Exception {
-    double fraisPays;
-    double fraisPoids;
-    double fraisDistance;
-
-    // 1. Déterminer les frais de base selon le PAYS (Facteur 1)
-    if ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) {
-        fraisPays = 5.00; // Frais de base Métropole
-    } else if (isDOMTOM(ville)) {
-        fraisPays = 25.00; // Frais de base DOM-TOM 
-    } else {
-        fraisPays = 40.00; // Frais International
     }
 
-    // 2. Ajouter un coût basé sur le POIDS (Facteur 2)
-    fraisPoids = poidsTotal * 0.5; // 0.5€ par Kg
-
-    // 3. Ajouter un coût basé sur la DISTANCE/ZONE (Facteur 3)
-    if ("GRENOBLE".equalsIgnoreCase(ville) || "SAINT-MARTIN-D'HERES".equalsIgnoreCase(ville)) {
-        fraisDistance = 0.00; // Zone locale (Isère)
-    } else if ("LYON".equalsIgnoreCase(ville)) {
-        fraisDistance = 5.00; // Petite distance (Rhône-Alpes)
-    } else {
-        fraisDistance = 10.00; // Grande distance (hors Rhône-Alpes)
-    }
-    
-    // Total
-    return fraisPays + fraisPoids + fraisDistance;
-}
-
-/**
- * Calcule la Date de Livraison Estimée (FDE) basée sur le pays (délai de transit).
- */
-public java.util.Date calculerDateLivraisonEstimee(String pays, String ville) {
-    // Utilise Calendar pour manipuler la date facilement
-    java.util.Calendar cal = java.util.Calendar.getInstance();
-    cal.setTime(new java.util.Date()); // Date de la commande (maintenant)
-
-    int delaiJours = 1; // 1 jour pour préparer la commande
-    
-    // Délai de transit selon la destination
-    if ("FRANCE".equalsIgnoreCase(pays) && !isDOMTOM(ville)) {
-        delaiJours += 3; // 3 jours de transit Métropole (total 4 jours)
-    } else if (isDOMTOM(ville)) {
-        delaiJours += 10; // 10 jours de transit DOM-TOM (total 11 jours)
-    } else {
-        delaiJours += 15; // 15 jours de transit International (total 16 jours)
+    // Adresse du client
+    public int demanderAdresse(int idClient) throws Exception {
+        List<Integer> adresses = dao.getAdressesClient(idClient);
+        if (adresses.isEmpty())
+            throw new Exception("Aucune adresse pour ce client.");
+        if (adresses.size() == 1)
+            return adresses.get(0);
+        System.out.println("Choisissez une adresse :");
+        for (int i = 0; i < adresses.size(); i++)
+            System.out.println((i + 1) + ". ID = " + adresses.get(i));
+        Scanner sc = new Scanner(System.in);
+        int choix = Integer.parseInt(sc.nextLine());
+        return adresses.get(choix - 1);
     }
 
-    // Ajout du délai total à la date de commande
-    cal.add(java.util.Calendar.DAY_OF_YEAR, delaiJours);
-    
-    return cal.getTime();
+    // type de conditionnement d'un produit
+    public String getTypeCondProduit(int idProd) throws Exception {
+        return dao.getTypeCond(idProd);
 }
 
-/**
- * Méthode utilitaire pour vérifier si la ville fait partie des départements ou territoires d'outre-mer.
- */
-private boolean isDOMTOM(String ville) {
-    if (ville == null) return false;
-    String villeMaj = ville.toUpperCase();
-    return villeMaj.contains("FORT-DE-FRANCE")  || villeMaj.contains("CAYENNE") || 
-           villeMaj.contains("SAINT-DENIS")     || villeMaj.contains("NOUMÉA")  ||
-           villeMaj.contains("LES ABYMES")      || villeMaj.contains("PAPEETE") ||
-           villeMaj.contains("MAMOUDZOU");
+
 }
-
-// =============================================================
-// CLASSE DE RETOUR (AJOUTÉE)
-// =============================================================
-/**
- * Objet de retour pour la méthode passerCommande, contenant l'ID et le montant final.
- */
-public class ResultatCommande {
-    public final int idCommande;
-    public final double montantTotal;
-
-    public ResultatCommande(int idCommande, double montantTotal) {
-        this.idCommande = idCommande;
-        this.montantTotal = montantTotal;
-    }
-}
-
-} // Fin de la classe Service
