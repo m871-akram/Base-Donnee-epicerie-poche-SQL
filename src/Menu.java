@@ -106,15 +106,18 @@ public class Menu {
             // Mode de récuprération
             System.out.print("Mode récupération (Retrait / Livraison) : ");
             String modeRecuperation = sc.nextLine().trim();
-            if (!modeRecuperation.equalsIgnoreCase("Retrait") &&
-                !modeRecuperation.equalsIgnoreCase("Livraison")) {
-                System.out.println("Mode invalide.");
+            modeRecuperation = modeRecuperation.toUpperCase();
+            if (!modeRecuperation.equals("RETRAIT") && !modeRecuperation.equals("LIVRAISON")) {
+                System.out.println("Mode invalide. Choisir 'Retrait' ou 'Livraison'.");
                 return;
             }
-
             // Mode de paiement
             System.out.print("Mode paiement (EN LIGNE / EN BOUTIQUE) : ");
-            String modePaiement = sc.nextLine().trim();
+            String modePaiement = sc.nextLine().trim().toUpperCase();
+            if (!modePaiement.equals("EN LIGNE") && !modePaiement.equals("EN BOUTIQUE")) {
+                System.out.println("Mode paiement invalide.");
+                return;
+            }
             // Adresse pour livraison
             int idAdresse = -1;
             if (modeRecuperation.equalsIgnoreCase("Livraison")) {
@@ -157,8 +160,32 @@ public class Menu {
                         }
                     }
                 }
+
+                 if (type.equals("VRAC")) {
+     List<String[]> contenants = service.getContenantsCompatibles(q);
+     if (!contenants.isEmpty()) {
+         System.out.println("Souhaites-tu un contenant ? (O/N)");
+         String rep = sc.nextLine();
+         if (rep.equalsIgnoreCase("O")) {
+             System.out.println("Choisis un contenant :");
+             for (int j = 0; j < contenants.size(); j++) {
+                 String[] c = contenants.get(j);
+                 System.out.println((j + 1) + ". " + c[2] + " (" + c[1] + ")");
+             }
+
+             System.out.print("Choix : ");
+             int choix = Integer.parseInt(sc.nextLine());
+             int idContenant = Integer.parseInt(contenants.get(choix - 1)[0]);
+
+             // On ajoute le contenant dans une structure dédiée
+             service.ajouterContenantPourCommandeTemp(idContenant);
+         }
+     }
+ }
                 else {
-                    System.out.println("Pour les produit de type PRECOND l'unité imposée est Unité");
+                     if (type.equals("PRE")) {
+     System.out.println("Produit préconditionné → unité = 1 Unité par article.");
+ }
                 }
                 lignes.add(new Ligne(p, q, unite));
             }

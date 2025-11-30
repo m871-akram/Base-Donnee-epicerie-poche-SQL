@@ -323,12 +323,16 @@ public class Dao {
     public List<LotInfo> getStockLotsProduit(int idProduit) throws SQLException {
         List<LotInfo> lots = new ArrayList<>();
         String sql = """
-            SELECT LP.IDLOTPRODUIT,(LP.QUANTITESTOCKLOT - COALESCE(SUM(RS.QUANTITE), 0)) AS STOCK_DISPONIBLE
-            FROM LOT_P LEFT JOIN LP.IDPRODUIT = ? AND (LP.DATEPEREMPTION IS NULL OR LP.DATEPEREMPTION > SYSDATE) 
-            GROUP BY LP.IDLOTPRODUIT, LP.QUANTITESTOCKLOT, LP.DATION
-            HAVING (LP.QUANTITESTOCKLOT - COALESCE(SUM(RS.QUANTITE), 0)) > 0
-            ORDER BY LP.DATEPEREMPTION ASC, LP.DATERECEPTION ASC 
-        """;
+                SELECT 
+                    IDLOTPRODUIT,
+                    QUANTITESTOCKLOT
+                FROM LOT_PRODUIT
+                WHERE IDPRODUIT = ?
+                  AND DATEPEREMPTION > SYSDATE
+                  AND QUANTITESTOCKLOT > 0
+                ORDER BY DATEPEREMPTION ASC, DATERECEPTION ASC
+                FOR UPDATE
+            """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idProduit);
             try (ResultSet rs = st.executeQuery()) {
@@ -340,14 +344,19 @@ public class Dao {
     }
     public void updateStockLot(int idLot, double quantitePrise) throws SQLException {
         String sql = """
-            UPDATE LOT_PRODUIT
-            SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - ?
-            WHERE IDLOTPRODUIT = ?
-        """;
+              UPDATE LOT_PRODUIT
+                SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - ?
+                WHERE IDLOTPRODUIT = ?
+                  AND QUANTITESTOCKLOT >= ?
+            """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setDouble(1, quantitePrise);
             st.setInt(2, idLot);
-            st.executeUpdate();
+            st.setDouble(3, quantitePrise);
+            int rows = st.executeUpdate();
+            if (rows == 0) {
+                throw new SQLException("Stock insuffisant sur le lot " + idLot);
+            }
         }
     }
 
@@ -399,6 +408,21 @@ public class Dao {
             st.executeUpdate();
         }
     }
+
+    public void updatePrixPrecond(int idProduit, int pourcentage) throws SQLException {
+     String sql = """
+         UPDATE PRECOND
+         SET PRIXVENTEP = PRIXVENTEP * (1 - (? / 100.0))
+         WHERE IDPRODUIT = ?
+     """;
+     try (PreparedStatement st = db.prepare(sql)) {
+         st.setInt(1, pourcentage);
+         st.setInt(2, idProduit);
+         st.executeUpdate();
+     }
+    }
+
+
     // La cloture ( fonctionnalite3)
     public String getStatutEtVerrouillerCommande(int idCommande) throws SQLException {
         String sql = "SELECT STATUT FROM COMMANDE WHERE IDCOMMANDE=? FOR UPDATE";
@@ -522,14 +546,12 @@ public class Dao {
     public double getStockTotalProduit(int idProduit) throws SQLException {
         String sql = """
             SELECT
-                COALESCE(SUM(LP.QUANTITESTOCKLOT), 0) - COALESCE(SUM(RS.QUANTITE), 0)
+                COALESCE(SUM(QUANTITESTOCKLOT), 0)
             FROM
-                LOT_PRODUIT LP
-            LEFT JOIN
-                RESERVATION_STOCK RS ON LP.IDLOTPRODUIT = RS.IDLOTPRODUIT
+                LOT_PRODUIT
             WHERE
-                LP.IDPRODUIT = ?
-                AND (LP.DATEPEREMPTION IS NULL OR LP.DATEPEREMPTION > SYSDATE) 
+                IDPRODUIT = ?
+                AND DATEPEREMPTION > SYSDATE
         """;
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idProduit);

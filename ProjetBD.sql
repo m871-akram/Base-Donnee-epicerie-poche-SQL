@@ -221,14 +221,16 @@ CREATE TABLE LOT_PRODUIT (
     UNITESTOCKLOT VARCHAR2(20) CHECK (UNITESTOCKLOT IN ('Kg','Unite')),
     DATERECEPTION DATE,
     DATEPEREMPTION DATE,
-    TYPEDATE VARCHAR2(10) CHECK (TYPEDATE IN ('DLC','DLUO')),
+    TYPEDATE VARCHAR2(10) NOT NULL CHECK (TYPEDATE IN ('DLC','DLUO')),
     FOREIGN KEY (IDPRODUIT) REFERENCES PRODUIT(IDPRODUIT) ON DELETE CASCADE,
     CONSTRAINT LOTPRODUITDATE CHECK (DATEPEREMPTION >= DATERECEPTION),
     CONSTRAINT LOTPRODUIT_DLC_DLUO_XOR CHECK (
-        (TYPEDATE = 'DLC' AND DATEPEREMPTION IS NOT NULL)
-        OR
-        (TYPEDATE = 'DLUO' AND DATEPEREMPTION IS NOT NULL)
-    )
+        DATEPEREMPTION IS NOT NULL
+        AND TYPEDATE IN ('DLC','DLUO')
+    ),
+    -- Hypothèse du sujet : au plus une livraison par jour et par produit
+    CONSTRAINT LOTPRODUIT_UNQ_JOUR UNIQUE (IDPRODUIT, DATERECEPTION)
+    
 );
 
 CREATE TABLE LOT_CONTENANT (
@@ -609,8 +611,11 @@ INSERT INTO COMMANDE VALUES (5, SYSDATE-1, '09:00:00', 'Prete', 'EN LIGNE', 2);
 INSERT INTO LIGNE_COMMANDE VALUES (5, 1, 13, 2, 'Kg', 4.00, 8.00, 0);
 INSERT INTO LIVRAISON_DOMICILE VALUES (3, 5, 5.00, SYSDATE+1, 2, NULL);
 
--- =============================================================
--- AJOUT DU PRODUIT PLACEHOLDER POUR LES CONTENANTS (CORRECTION ORA-02291)
+ -- =============================================================
+-- PRODUIT TECHNIQUE : 999
+-- Utilisé comme ligne de produit "factice" pour représenter
+-- la vente des contenants dans LIGNE_COMMANDE (logique Java).
+-- Le prix réel est porté par la table CONTENANT, pas par ce produit.
 -- =============================================================
 
 INSERT INTO PRODUIT VALUES (999,'Contenant','Accessoire',NULL,1);

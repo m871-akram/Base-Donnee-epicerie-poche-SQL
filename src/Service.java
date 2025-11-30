@@ -9,6 +9,8 @@ public class Service {
     private final Dao dao;
     private final Database db;
 
+    private final List<Integer> contenantsChoisis = new ArrayList<>();
+
     /**Classe interne utilisée pour stocker temporairement une ligne de commande 
      * avec les prix calculés avant l'insertion en base.
      */
@@ -28,6 +30,12 @@ public class Service {
         this.db = db;
         this.dao = dao;
     }
+
+    public void ajouterContenantPourCommandeTemp(int idContenant) {
+     contenantsChoisis.add(idContenant);
+    }
+
+
 
     
     // Gestion du client
@@ -103,6 +111,13 @@ public class Service {
                 throw new Exception("La commande ne contient aucun produit.");
             // Création commande
             int idCommande = dao.creerCommande(idClient, modePaiement);
+
+            int numLigneContenant = 1000;  // évite conflits avec produits
+ for (int idContenant : contenantsChoisis) {
+     dao.ajouterContenantALaCommande(idCommande, idContenant, numLigneContenant);
+     numLigneContenant++;
+ }
+ contenantsChoisis.clear();
             List<LigneAvecPrix> lignesProduitsPourDestockage = new ArrayList<>();
             double montantTotal = 0;
             int numLigne = 1; 
@@ -150,15 +165,24 @@ public class Service {
 
             // Déstockage produit 
             for (LigneAvecPrix lp : lignesProduitsPourDestockage) {
-                double q = lp.ligne.quantite;
+                double restant = lp.ligne.quantite;
                 List<Dao.LotInfo> lots = dao.getStockLotsProduit(lp.ligne.idProduit);
+
                 for (Dao.LotInfo lot : lots) {
-                    if (q <= 0) break;
-                    double prendre = Math.min(q, lot.stockActuel);
-                    dao.updateStockLot(lot.idLot, prendre);
-                    q -= prendre;
-                }
-            }
+                    if (restant <= 0) break;
+
+         double aPrendre = Math.min(restant, lot.stockActuel);
+
+         // Décrément stock sécurisé
+         dao.updateStockLot(lot.idLot, aPrendre);
+
+         restant -= aPrendre;
+     }
+
+     if (restant > 0) {
+         throw new Exception("Stock insuffisant après verrouillage (concurrence).");
+     }
+ }
             db.commit();
             return new ResultatCommande(idCommande, montantTotal);
 
@@ -181,13 +205,15 @@ public class Service {
         double poids = 0;
         List<Ligne> lignes = dao.getLignesCommande(idCommande);
         for (Ligne l : lignes) {
-            if (l.unite.equalsIgnoreCase("Kg"))
-                poids += l.quantite;
-            else {
-                Double pf = dao.getPoidsFixe(l.idProduit);
-                if (pf != null)
-                    poids += pf * l.quantite;
-            }
+            if ("Kg".equalsIgnoreCase(l.unite)) {
+     poids += l.quantite;
+ } else {
+     Double pf = dao.getPoidsFixe(l.idProduit);
+     if (pf == null) {
+         throw new SQLException("Produit préconditionné sans poids fixe : " + l.idProduit);
+     }
+     poids += (pf / 1000.0) * l.quantite; // conversion grammes → kg
+ }
         }
         return poids;
     }
@@ -233,10 +259,16 @@ public class Service {
             List<Integer> produits = dao.getProduitsAjuster();
             int count = 0;
 
-            for (int idP : produits) {
-                dao.updatePrixVrac(idP, pourcentage);
-                count++;
-            }
+               for (int idP : produits) {
+       try {
+            dao.updatePrixVrac(idP, pourcentage);
+            count++;
+        } catch (Exception e1) {
+            // si ce n'est pas du vrac → essayer PRECOND
+            dao.updatePrixPrecond(idP, pourcentage);
+            count++;
+        }
+    }
 
             db.commit();
             return count;
@@ -252,8 +284,10 @@ public class Service {
         db.setAutoCommit(false);
         try {
             String statut = dao.getStatutEtVerrouillerCommande(idCommande);
-            if (!statut.equals("En preparation"))
-                throw new Exception("Commande non clôturable : " + statut);
+            List<String> etatsPossibles = List.of("En preparation", "Prete", "En livraison");
+            if (!etatsPossibles.contains(statut)) {
+                throw new Exception("Commande non clôturable au statut : " + statut);
+            }
             String[] modes = dao.getModeRecupAndPaiement(idCommande);
             String modeRecup = modes[0];
             String nouveauStatut = modeRecup.equals("Retrait") ? "Recupere" : "Livree";
