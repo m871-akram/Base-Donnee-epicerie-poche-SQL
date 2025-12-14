@@ -1,4 +1,4 @@
-# ProjetBD - Épicerie "Le Bon Choix"
+# ProjetBD - Épicerie-Poche
 
 Système de gestion de commandes pour une épicerie locale avec gestion avancée des stocks, saisonnalité des produits, et livraison.
 
