@@ -8,9 +8,9 @@ public class Main {
             // Étape 1 : Créer la connexion à Oracle (JDBC)
             // URL format : jdbc:oracle:thin:@host:port:sid
             Database db = new Database(
-                    "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1",
-                    "trombatm",
-                    "trombatm"
+                    "jdbc:oracle:thin:@localhost:1521:oracle1",
+                    "user",
+                    "pswd"
             );
             // Étape 2 : Créer les objets en cascade 
             Dao dao = new Dao(db);
