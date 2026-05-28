@@ -1,0 +1,6 @@
+# Compiled Java output
+out/
+*.class
+
+# IntelliJ IDEA - Copilot migration files
+.idea/copilot.data.migration.*.xml

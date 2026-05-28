@@ -1,29 +1,27 @@
--- FONCTIONNALITÉ 3 (CLÔTURE DE COMMANDE) 
+-- =============================================================
+-- FONCTIONNALITÉ 3 : CLÔTURE D'UNE COMMANDE (Retrait ou Livraison)
+-- =============================================================
 
--- Verrouillage pessimiste de la commande et récupération du statut
--- Nécessite que le Database setAutoCommit(false) et qu'un commit soit lancé après.
+-- 1. Verrouillage pessimiste de la commande (empêche une double clôture concurrente)
 SELECT STATUT FROM COMMANDE WHERE IDCOMMANDE = :idCommande FOR UPDATE;
+-- STATUT doit être 'En preparation', 'Prete' ou 'En livraison', sinon ROLLBACK.
 
--- Enregistrement de la date réelle 
--- Une seule des deux tables (RETRAIT_BOUTIQUE ou LIVRAISON_DOMICILE) sera affectée.
-UPDATE RETRAIT_BOUTIQUE
-SET DATEREELLE = SYSDATE
-WHERE IDCOMMANDE = :idCommande;
+-- 2. Récupération du mode de récupération et du mode de paiement
+SELECT MODEPAIEMENT FROM COMMANDE WHERE IDCOMMANDE = :idCommande;
+SELECT 1 FROM RETRAIT_BOUTIQUE WHERE IDCOMMANDE = :idCommande;   -- présent → Retrait
+SELECT 1 FROM LIVRAISON_DOMICILE WHERE IDCOMMANDE = :idCommande; -- présent → Livraison
 
-UPDATE LIVRAISON_DOMICILE
-SET DATEREELLE = SYSDATE
-WHERE IDCOMMANDE = :idCommande;
+-- 3. Enregistrement de la date réelle (une seule des deux tables est concernée)
+UPDATE RETRAIT_BOUTIQUE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = :idCommande;
+-- ou :
+UPDATE LIVRAISON_DOMICILE SET DATEREELLE = SYSDATE WHERE IDCOMMANDE = :idCommande;
 
+-- 4. Mise à jour du statut final
+UPDATE COMMANDE SET STATUT = 'Recupere' WHERE IDCOMMANDE = :idCommande; -- mode Retrait
+-- ou :
+UPDATE COMMANDE SET STATUT = 'Livree' WHERE IDCOMMANDE = :idCommande;   -- mode Livraison
 
--- Mise à jour du Statut Final (Utilisation de l'expression CASE)
-UPDATE COMMANDE C
-SET C.STATUT = (
-    -- Détermine le statut final en vérifiant l'existence de la commande dans RETRAIT_BOUTIQUE
-    CASE
-        WHEN EXISTS (SELECT 1 FROM RETRAIT_BOUTIQUE R WHERE R.IDCOMMANDE = C.IDCOMMANDE) THEN 'Recupere'
-        ELSE 'Livree' -- Si pas de retrait, c'est une livraison
-    END
-)
-WHERE C.IDCOMMANDE = :idCommande;
+-- Note : si mode de paiement = 'EN BOUTIQUE' et mode de récupération = 'Retrait',
+-- DATEREELLE dans RETRAIT_BOUTIQUE sert de timestamp du paiement effectif.
 
 COMMIT;
