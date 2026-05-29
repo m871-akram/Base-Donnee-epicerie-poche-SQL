@@ -9,8 +9,8 @@ public class Main {
             // URL format : jdbc:oracle:thin:@host:port:sid
             Database db = new Database(
                     "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1",
-                    "lrhorfim",
-                    "lrhorfim"
+                    "user",
+                    "user"
             );
             // Étape 2 : Créer les objets en cascade 
             Dao dao = new Dao(db);
