@@ -10,7 +10,7 @@ public class Database {
     }
 
     public PreparedStatement prepare(String sql) throws SQLException {
-        return con.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS);
+        return con.prepareStatement(sql);
     }
 
     // à utiliser quand on veut récupérer des colonnes générées (ex: IDCOMMANDE après INSERT)

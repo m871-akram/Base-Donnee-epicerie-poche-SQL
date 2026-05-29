@@ -30,7 +30,7 @@ public class Menu {
         }
     }
 
-    public void startClientLoop() {
+    private void startClientLoop() {
         while (true) {
             System.out.println("\n --- MENU DU CLIENT ---");
             System.out.println("1. Afficher catalogue des produits");
@@ -53,7 +53,7 @@ public class Menu {
         }
     }
 
-    public void startEpicierLoop() {
+    private void startEpicierLoop() {
         while (true) {
             System.out.println("\n--- MENU DE L'ÉPICIER ---");
             System.out.println("1. Ajuster prix péremption");
@@ -108,7 +108,7 @@ public class Menu {
             }
 
             int idAdresse = -1;
-            if (modeRecuperation.equalsIgnoreCase("Livraison")) {
+            if (modeRecuperation.equals("LIVRAISON")) {
                 idAdresse = service.demanderAdresse(idClient, sc);
                 System.out.println("Adresse sélectionnée : " + idAdresse);
             }

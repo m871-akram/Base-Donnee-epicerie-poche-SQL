@@ -272,23 +272,23 @@ public class Dao {
         return lignes;
     }
 
-    public void enregistrerModeRecuperation(int idCommande, String mode, int idAdresse) throws SQLException {
-        if (mode.equalsIgnoreCase("Retrait")) {
-            String sql = "INSERT INTO RETRAIT_BOUTIQUE(idretraitboutique,idcommande) VALUES (SEQ_RETRAIT_BOUTIQUE.NEXTVAL,?)";
-            try (PreparedStatement st = db.prepare(sql)) {
-                st.setInt(1, idCommande);
-                st.executeUpdate();
-            }
-        } else {
-            String sql = """
-                INSERT INTO LIVRAISON_DOMICILE(idlivraisondomicile,idcommande,fraislivraison,idadresse)
-                VALUES (SEQ_LIVRAISON_DOMICILE.NEXTVAL, ?, 0, ?)
-            """;
-            try (PreparedStatement st = db.prepare(sql)) {
-                st.setInt(1, idCommande);
-                st.setInt(2, idAdresse);
-                st.executeUpdate();
-            }
+    public void enregistrerRetrait(int idCommande) throws SQLException {
+        String sql = "INSERT INTO RETRAIT_BOUTIQUE(idretraitboutique,idcommande) VALUES (SEQ_RETRAIT_BOUTIQUE.NEXTVAL,?)";
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idCommande);
+            st.executeUpdate();
+        }
+    }
+
+    public void enregistrerLivraison(int idCommande, int idAdresse) throws SQLException {
+        String sql = """
+            INSERT INTO LIVRAISON_DOMICILE(idlivraisondomicile,idcommande,fraislivraison,idadresse)
+            VALUES (SEQ_LIVRAISON_DOMICILE.NEXTVAL, ?, 0, ?)
+        """;
+        try (PreparedStatement st = db.prepare(sql)) {
+            st.setInt(1, idCommande);
+            st.setInt(2, idAdresse);
+            st.executeUpdate();
         }
     }
 
@@ -360,28 +360,38 @@ public class Dao {
         String sql = "SELECT IDPRODUIT FROM PRODUIT WHERE IDPRODUIT = ? FOR UPDATE";
         try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idProduit);
-            st.executeQuery();
+            try (ResultSet rs = st.executeQuery()) {}
         }
     }
 
     // stock disponible = stock total - quantités déjà réservées par des commandes "En preparation"
     public double getStockDisponible(int idProduit) throws SQLException {
-        String sql = """
-            SELECT NVL(SUM(lp.QUANTITESTOCKLOT), 0) - NVL(
-                (SELECT SUM(rs.QUANTITE) FROM RESERVATION_STOCK rs
-                 WHERE rs.IDLOTPRODUIT IN (
-                     SELECT IDLOTPRODUIT FROM LOT_PRODUIT
-                     WHERE IDPRODUIT = ? AND DATEPEREMPTION > SYSDATE)), 0)
-            FROM LOT_PRODUIT lp
-            WHERE lp.IDPRODUIT = ? AND lp.DATEPEREMPTION > SYSDATE
+        String sqlStock = """
+            SELECT NVL(SUM(QUANTITESTOCKLOT), 0)
+            FROM LOT_PRODUIT
+            WHERE IDPRODUIT = ? AND DATEPEREMPTION > SYSDATE
         """;
-        try (PreparedStatement st = db.prepare(sql)) {
+        double totalStock = 0;
+        try (PreparedStatement st = db.prepare(sqlStock)) {
             st.setInt(1, idProduit);
-            st.setInt(2, idProduit);
             try (ResultSet rs = st.executeQuery()) {
-                return rs.next() ? rs.getDouble(1) : 0.0;
+                if (rs.next()) totalStock = rs.getDouble(1);
             }
         }
+        String sqlReserved = """
+            SELECT NVL(SUM(rs.QUANTITE), 0)
+            FROM RESERVATION_STOCK rs
+            JOIN LOT_PRODUIT lp ON rs.IDLOTPRODUIT = lp.IDLOTPRODUIT
+            WHERE lp.IDPRODUIT = ? AND lp.DATEPEREMPTION > SYSDATE
+        """;
+        double reserved = 0;
+        try (PreparedStatement st = db.prepare(sqlReserved)) {
+            st.setInt(1, idProduit);
+            try (ResultSet rs = st.executeQuery()) {
+                if (rs.next()) reserved = rs.getDouble(1);
+            }
+        }
+        return totalStock - reserved;
     }
 
     // lots disponibles en FEFO : stockActuel = stock du lot - ce qui est déjà réservé sur ce lot
@@ -558,36 +568,26 @@ public class Dao {
     }
 
     public String[] getModeRecupAndPaiement(int idCommande) throws SQLException {
-        String paiement = null;
-        String sql1 = "SELECT MODEPAIEMENT FROM COMMANDE WHERE IDCOMMANDE=?";
-        try (PreparedStatement st = db.prepare(sql1)) {
+        String sql = """
+            SELECT c.MODEPAIEMENT,
+                   CASE WHEN r.IDCOMMANDE IS NOT NULL THEN 'Retrait'
+                        WHEN l.IDCOMMANDE IS NOT NULL THEN 'Livraison'
+                        ELSE NULL END
+            FROM COMMANDE c
+            LEFT JOIN RETRAIT_BOUTIQUE r ON c.IDCOMMANDE = r.IDCOMMANDE
+            LEFT JOIN LIVRAISON_DOMICILE l ON c.IDCOMMANDE = l.IDCOMMANDE
+            WHERE c.IDCOMMANDE = ?
+        """;
+        try (PreparedStatement st = db.prepare(sql)) {
             st.setInt(1, idCommande);
             try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) paiement = rs.getString(1);
+                if (!rs.next()) throw new SQLException("Commande " + idCommande + " introuvable.");
+                String paiement = rs.getString(1);
+                String recup = rs.getString(2);
+                if (recup == null) throw new SQLException("Mode récupération introuvable.");
+                return new String[]{recup, paiement};
             }
         }
-        if (paiement == null)
-            throw new SQLException("Choisissez soit Retrait soit Livraison pour commande " + idCommande);
-        String recup = null;
-        String sqlR = "SELECT 1 FROM RETRAIT_BOUTIQUE WHERE IDCOMMANDE=?";
-        try (PreparedStatement st = db.prepare(sqlR)) {
-            st.setInt(1, idCommande);
-            try (ResultSet rs = st.executeQuery()) {
-                if (rs.next()) recup = "Retrait";
-            }
-        }
-        if (recup == null) {
-            String sqlL = "SELECT 1 FROM LIVRAISON_DOMICILE WHERE IDCOMMANDE=?";
-            try (PreparedStatement st = db.prepare(sqlL)) {
-                st.setInt(1, idCommande);
-                try (ResultSet rs = st.executeQuery()) {
-                    if (rs.next()) recup = "Livraison";
-                }
-            }
-        }
-        if (recup == null)
-            throw new SQLException("Mode récupération introuvable.");
-        return new String[]{recup, paiement};
     }
 
     public void enregistrerDateRecup(int idCommande, String mode) throws SQLException {

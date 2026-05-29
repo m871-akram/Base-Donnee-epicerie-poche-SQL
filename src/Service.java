@@ -68,7 +68,7 @@ public class Service {
             return idClient;
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur lors de la création du client : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -119,9 +119,12 @@ public class Service {
                 }
             }
 
-            dao.enregistrerModeRecuperation(idCommande, mode, idAdresse);
+            if (mode.equals("RETRAIT"))
+                dao.enregistrerRetrait(idCommande);
+            else
+                dao.enregistrerLivraison(idCommande, idAdresse);
 
-            if (mode.equalsIgnoreCase("Livraison")) {
+            if (mode.equals("LIVRAISON")) {
                 String pays = dao.getPaysLivraison(idCommande);
                 String ville = dao.getVilleLivraison(idCommande);
                 double poidsTotal = calculerPoidsTotalCommande(idCommande);
@@ -135,7 +138,7 @@ public class Service {
             return new ResultatCommande(idCommande, montantTotal);
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Échec de commande : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -200,7 +203,7 @@ public class Service {
             return count;
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur F2 : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -219,7 +222,7 @@ public class Service {
             return modes;
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur clôture : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -236,7 +239,7 @@ public class Service {
             db.commit();
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur passage en Prête : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -253,7 +256,7 @@ public class Service {
             db.commit();
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur annulation : " + e.getMessage());
+            throw e;
         }
     }
 
@@ -268,7 +271,7 @@ public class Service {
             db.commit();
         } catch (Exception e) {
             db.rollback();
-            throw new Exception("Erreur enregistrement perte : " + e.getMessage());
+            throw e;
         }
     }
 
