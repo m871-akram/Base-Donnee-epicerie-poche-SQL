@@ -1,14 +1,6 @@
 # ProjetBD — Épicerie "Le Bon Choix"
 
-Appli Java console pour gérer les commandes d'une épicerie locale, branchée sur Oracle via JDBC.
-Couvre : passage de commande (F1), ajustement de prix sur péremption (F2), clôture de commande (F3), annulations et pertes.
-
-## Architecture
-
-```
-Menu.java  ──→  Service.java  ──→  Dao.java  ──→  Database.java  ──→  Oracle DB
-  (UI)          (métier)           (SQL)            (JDBC)
-```
+Appli Java console pour gérer les commandes d'une épicerie locale, branchée sur Oracle via JDBC: passage de commande (F1), ajustement de prix sur péremption (F2), clôture de commande (F3), annulations et pertes.
 
 | Fichier | Rôle |
 |---------|------|
@@ -18,14 +10,18 @@ Menu.java  ──→  Service.java  ──→  Dao.java  ──→  Database.jav
 | `Service.java` | Logique métier + transactions |
 | `Menu.java` | Interface console client / épicier |
 | `Ligne.java` | Objet immuable représentant un article commandé |
+| `ProjetBD.sql` | Schéma complet + données de test |
+| `Fonctionnalite1.sql` | F1 : réservation (T-A) + déstockage (T-B) |
+| `Fonctionnalite2.sql` | F2 : alertes péremption + ajustement prix |
+| `Fonctionnalite3.sql` | F3 : clôture retrait ou livraison |
 
-## Prérequis
+- 10 producteurs, 20 produits (vrac + préconditionné), 7 types de contenants
+- Clients avec adresses à Grenoble
+- Lots avec péremption proche (pour tester F2)
+- Produits 3 et 7 (Miels) : aucune saison → toujours commandables
+- Produits 16 et 17 : stock = 0 → rejet garanti en F1
 
-- Java 17+ (text blocks `"""` utilisés partout)
 - Accès au serveur Oracle Ensimag : `oracle1.ensimag.fr:1521:oracle1`
-- Driver JDBC : `lib/ojdbc17.jar` (déjà inclus)
-
-## Démarrage rapide
 
 **1. Init la base** — ouvrir `ProjetBD.sql` dans SQL Developer, exécuter avec **F5**. Recrée tout from scratch.
 
@@ -172,28 +168,7 @@ PERTE ──< PRODUIT_PERDU  >── PRODUIT
 
 ---
 
-## Fichiers SQL
-
-| Fichier | Contenu |
-|---------|---------|
-| `ProjetBD.sql` | Schéma complet + données de test |
-| `Fonctionnalite1.sql` | F1 : réservation (T-A) + déstockage (T-B) |
-| `Fonctionnalite2.sql` | F2 : alertes péremption + ajustement prix |
-| `Fonctionnalite3.sql` | F3 : clôture retrait ou livraison |
-
----
-
-## Données de test incluses
-
-- 10 producteurs, 20 produits (vrac + préconditionné), 7 types de contenants
-- Clients avec adresses à Grenoble
-- Lots avec péremption proche (pour tester F2)
-- Produits 3 et 7 (Miels) : aucune saison → toujours commandables
-- Produits 16 et 17 : stock = 0 → rejet garanti en F1
-
----
-
-## Suite de tests
+## Tests
 
 Compiler d'abord :
 ```bash
@@ -363,21 +338,3 @@ COMMIT;
 Attendu : Session 2 se débloque instantanément.
 
 ---
-
-### Vérification finale (SQL Developer)
-
-```sql
--- Statuts des dernières commandes
-SELECT IDCOMMANDE, STATUT, MODEPAIEMENT, IDCLIENT
-FROM COMMANDE ORDER BY IDCOMMANDE DESC FETCH FIRST 15 ROWS ONLY;
-
--- Stock après déstockages (produit 9)
-SELECT IDLOTPRODUIT, QUANTITESTOCKLOT, DATEPEREMPTION
-FROM LOT_PRODUIT WHERE IDPRODUIT = 9 ORDER BY DATEPEREMPTION;
-
--- Réservations restantes (doit être vide si tout est clôturé/annulé)
-SELECT * FROM RESERVATION_STOCK;
-
--- Pertes enregistrées
-SELECT * FROM PERTE ORDER BY IDPERTE DESC;
-```
