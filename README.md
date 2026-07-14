@@ -1,237 +1,340 @@
-# ProjetBD - Épicerie-Poche
+# ProjetBD — Épicerie "Le Bon Choix"
 
-Système de gestion de commandes pour une épicerie locale avec gestion avancée des stocks, saisonnalité des produits, et livraison.
+Appli Java console pour gérer les commandes d'une épicerie locale, branchée sur Oracle via JDBC: passage de commande (F1), ajustement de prix sur péremption (F2), clôture de commande (F3), annulations et pertes.
 
+| Fichier | Rôle |
+|---------|------|
+| `Main.java` | Point d'entrée |
+| `Database.java` | Connexion JDBC, `autoCommit = false`, commit/rollback |
+| `Dao.java` | Requêtes SQL — rien d'autre |
+| `Service.java` | Logique métier + transactions |
+| `Menu.java` | Interface console client / épicier |
+| `Ligne.java` | Objet immuable représentant un article commandé |
+| `ProjetBD.sql` | Schéma complet + données de test |
+| `Fonctionnalite1.sql` | F1 : réservation (T-A) + déstockage (T-B) |
+| `Fonctionnalite2.sql` | F2 : alertes péremption + ajustement prix |
+| `Fonctionnalite3.sql` | F3 : clôture retrait ou livraison |
 
+- 10 producteurs, 20 produits (vrac + préconditionné), 7 types de contenants
+- Clients avec adresses à Grenoble
+- Lots avec péremption proche (pour tester F2)
+- Produits 3 et 7 (Miels) : aucune saison → toujours commandables
+- Produits 16 et 17 : stock = 0 → rejet garanti en F1
 
-Application Java console qui permet de gérer les commandes d'une épicerie en intégrant :
-- **Gestion des stocks** avec stratégie FEFO (First Expired, First Out)
-- **Produits saisonniers** avec vérification automatique des périodes de disponibilité
-- **Deux modes de récupération** : retrait en boutique ou livraison à domicile
-- **Calcul dynamique des frais** de livraison selon la zone géographique
-- **Gestion des contenants** réutilisables pour produits en vrac
+- Accès au serveur Oracle Ensimag : `oracle1.ensimag.fr:1521:oracle1`
 
-##  Architecture
+**1. Init la base** — ouvrir `ProjetBD.sql` dans SQL Developer, exécuter avec **F5**. Recrée tout from scratch.
 
-Architecture trois-tiers classique Java + Oracle Database :
-
-```
-Main.java
-   ↓
-Database.java ──→ Dao.java ──→ Service.java ──→ Menu.java
-(JDBC)         (SQL)         (Logique)      (UI Console)
-```
-
-### Composants
-
-| Fichier | Responsabilité |
-|---------|---------------|
-| **Main.java** | Point d'entrée, initialise les composants |
-| **Database.java** | Gestion de la connexion JDBC et transactions (commit/rollback) |
-| **Dao.java** | Exécution des requêtes SQL (aucune logique métier) |
-| **Service.java** | Logique métier, orchestration, gestion transactionnelle |
-| **Menu.java** | Interface console (client et épicier) |
-| **Ligne.java** | Objet de données immutable pour ligne de commande |
-
-
-
-### Prérequis
-
-- **Java 17+** (utilise les text blocks `"""`)
-- **Oracle Database** (testé avec Oracle 19c)
-- **JDBC Driver** : `ojdbc17.jar` (déjà inclus dans `lib/`)
-
-### Configuration de la base de données
-
-1. **Créer le schéma Oracle** :
-   ```sql
-   sqlplus user/pswd@localhost:1521/oracle1
-   @ProjetBD.sql
-   ```
-
-2. **Insérer les données de test** (optionnel) :
-   ```sql
-   -- Exécuter vos scripts d'insertion ici
-   ```
-
-3. **Vérifier les séquences** :
-   ```sql
-   SELECT sequence_name FROM user_sequences;
-   -- Doit afficher: SEQ_COMMANDE, SEQ_LIVRAISON_DOMICILE, SEQ_RETRAIT_BOUTIQUE
-   ```
-
-### Modifier la connexion (si nécessaire)
-
-Éditer [Main.java](src/Main.java#L10-L12) :
+**2. Configurer la connexion** dans `src/Main.java` :
 ```java
 Database db = new Database(
-    "jdbc:oracle:thin:@localhost:1521:oracle1",
-    "votre_username",
-    "votre_password"
+    "jdbc:oracle:thin:@oracle1.ensimag.fr:1521:oracle1",
+    "votre_login",
+    "votre_mot_de_passe"
 );
 ```
 
-### Compilation et exécution
-
+**3. Compiler + lancer :**
 ```bash
-# Compiler tous les fichiers
-javac -cp "lib/ojdbc17.jar:." src/*.java
-
-# Lancer l'application
-java -cp "lib/ojdbc17.jar:src" Main
+mkdir -p out && javac -cp lib/ojdbc17.jar -d out src/*.java
+java -cp out:lib/ojdbc17.jar Main
 ```
 
+---
 
-
-### Interface principale
-
-Au démarrage, vous choisissez votre rôle :
-
-```
-BIENVENUE à l'épicerie 'LE BON CHOIX'
-1. Entrer en tant que client
-2. Entrer en tant qu'épicier
-0. Quitter le menu
-```
+## Fonctionnalités
 
 ### Mode Client
 
-**Fonctionnalités disponibles** :
-1. **Afficher le catalogue** : Liste tous les produits disponibles
-2. **Passer une commande** :
-   - Création/connexion compte client
-   - Sélection des produits
-   - Choix des contenants pour produits en vrac
-   - Mode de récupération (retrait/livraison)
-   - Calcul automatique du total et frais de livraison
+**1 — Catalogue** : liste les produits avec stock dispo (hors réservations en cours). Affiche `rupture` si stock = 0.
+
+**2 — Passer une commande (F1)**
+```
+Login (ID ou email) ou création de compte
+    ↓
+Mode récupération : RETRAIT ou LIVRAISON
+    ↓
+Mode paiement : EN LIGNE ou EN BOUTIQUE
+    ↓
+Saisie produits + quantités
+  • Vérif saisonnalité (PERIODE_DISPONIBILITE) — pas de période = dispo toute l'année
+  • Vérif stock dispo (stock réel − réservations actives)
+  • Produit VRAC → proposition d'un contenant compatible
+    ↓
+Réservation FEFO dans RESERVATION_STOCK + COMMIT
+  (le stock physique est déduit uniquement au passage en 'Prête')
+```
+
+Login : saisir un ID numérique **ou** un email — la présence de `@` déclenche la recherche par email.
+
+**Frais de livraison** (fixe + 0,50 €/kg) :
+
+| Zone | Fixe |
+|------|------|
+| Grenoble / Saint-Martin-d'Hères | 5 € |
+| Lyon | 10 € |
+| France métropolitaine | 15 € |
+| DOM-TOM | 35 € |
+| International | 50 € |
+
+Délai estimé : 4 j (France), 11 j (DOM-TOM), 16 j (international).
+
+**3 — Annuler une commande** : uniquement si statut `En preparation`. Les réservations sont libérées immédiatement.
+
+---
 
 ### Mode Épicier
 
-**Fonctionnalités disponibles** :
-1. **Ajuster prix péremption** : Réduction automatique pour produits proches de la péremption
-2. **Clôturer commande** : Finaliser une commande en préparation
+**1 — Ajuster prix péremption (F2)** : affiche les lots qui expirent dans les 7 prochains jours, puis applique un % de réduction saisi.
 
-##  Fonctionnalités principales
+**2 — Marquer Prête** : passe de `En preparation` → `Prete` et déduit le stock réel lot par lot (ordre FEFO).
 
-### 1. Passage de commande (Fonctionnalité 1)
+**3 — Clôturer une commande (F3)** : passe au statut final :
+- `Recupere` si retrait (+ `DATEREELLE` dans `RETRAIT_BOUTIQUE`)
+- `Livree` si livraison (+ `DATEREELLE` dans `LIVRAISON_DOMICILE`)
 
-**Workflow** :
-```
-Vérification client → Sélection produits → Validation stock/saison
-    ↓
-Création commande → Ajout lignes → Calcul frais livraison
-    ↓
-Déstockage FEFO → COMMIT (ou ROLLBACK si erreur)
-```
+Si paiement `EN BOUTIQUE` : `DATEREELLE` fait office de timestamp de paiement.
 
+**4 — Annuler une commande** : possible tant que la commande n'est pas finalisée (`Recupere`/`Livree`/`Annulee` bloqués).
 
--  Transaction ACID avec `setAutoCommit(false)`
--  Vérification saisonnalité via `PERIODE_DISPONIBILITE`
--  Déstockage FEFO avec `ORDER BY DATEPEREMPTION ASC FOR UPDATE`
--  Calcul des frais de livraison selon zone :
-  - **Grenoble/Saint-Martin-d'Hères** : 5€ (frais de proximité)
-  - **Lyon** : 10€ (frais de proximité + 5€ distance)
-  - **France métropolitaine** : 15€ + 0,5€/kg
-  - **DOM-TOM** : 35€ + 0,5€/kg
-  - **International** : 50€ + 0,5€/kg
+**5 — Enregistrer une perte** : nature (vol/casse/dommage), type (Produit ou Contenant), ID et quantité. Insère dans `PERTE` + `PRODUIT_PERDU` ou `CONTENANT_PERDU`.
 
-### 2. Ajustement prix péremption (Fonctionnalité 2)
+---
 
-Réduction automatique des prix pour produits avec dates de péremption proches :
-- **< 7 jours** : -20%
-- **< 3 jours** : -50%
+## Transactions & concurrence
 
-### 3. Clôture de commande (Fonctionnalité 3)
-
-Finalise les commandes "En préparation" et gère les contenants retournés.
-
-##  Schéma de base de données
-
-### Tables principales
-
-| Table | Description |
-|-------|-------------|
-| `PRODUIT` | Catalogue des produits (lien vers producteur) |
-| `VRAC` / `PRECOND` | Types de conditionnement (vrac/préconditionné) |
-| `LOT_PRODUIT` | Lots de stock avec date de péremption et réception |
-| `COMMANDE` | En-tête des commandes clients |
-| `LIGNE_COMMANDE` | Détails des produits/contenants commandés |
-| `LIVRAISON_DOMICILE` | Informations de livraison (frais, date estimée) |
-| `RETRAIT_BOUTIQUE` | Informations de retrait en boutique |
-| `CONTENANT` | Contenants réutilisables (bocaux, sacs, etc.) |
-| `PERIODE_DISPONIBILITE` | Périodes de disponibilité saisonnière |
-
-### Séquences Oracle
-
-```sql
-SEQ_COMMANDE              -- Génération des ID de commande
-SEQ_LIVRAISON_DOMICILE    -- Génération des ID de livraison
-SEQ_RETRAIT_BOUTIQUE      -- Génération des ID de retrait
-```
-
-##  Gestion des transactions
-
-**Principe ACID strict** :
+`autoCommit = false` dès la connexion. Chaque méthode de `Service` commit si tout va bien, rollback sinon :
 
 ```java
-// Service.passerCommande() - Pattern canonique
 try {
-    // 1. Validation métier
-    if (stockTotal < quantite) throw new Exception("Stock insuffisant");
-    
-    // 2. Opérations en base
-    dao.creerCommande(...);
-    dao.ajouterLigneCommande(...);
-    dao.updateStockLot(...);
-    
-    // 3. Commit si tout OK
+    // opérations Dao...
     db.commit();
-    
 } catch (Exception e) {
-    // 4. Rollback en cas d'erreur
     db.rollback();
-    throw new Exception("Échec : " + e.getMessage());
+    throw e;
 }
 ```
 
-**Règles** :
--  `setAutoCommit(false)` activé dès la connexion
--  Commit/rollback **uniquement** dans la couche Service
--  `FOR UPDATE` sur les lectures de stock pour éviter les conditions de course
+### Cycle de vie d'une commande
 
+```
+[F1]                    [Épicier]           [Épicier F3]
+En preparation  ──────→  Prete  ──────────→  Recupere
+     │           marquer         clôture           Livree
+     └─────────────────────────────────────→  Annulee
+                    annulation (client ou épicier)
+```
 
+### Verrous pessimistes
 
-## Ajout d'une  fonctionnalité
+| Opération | Verrou |
+|-----------|--------|
+| Passer commande (F1) | `PRODUIT FOR UPDATE` par produit |
+| Marquer Prête | `COMMANDE FOR UPDATE` + `RESERVATION_STOCK FOR UPDATE` |
+| Clôturer / Annuler | `COMMANDE FOR UPDATE` |
 
-1. **Dao.java** : Ajouter la méthode SQL avec `PreparedStatement`
-   ```java
-   public ResultType maRequete(params) throws SQLException {
-       String sql = """
-           SELECT ... FROM ... WHERE ... = ?
-       """;
-       try (PreparedStatement st = db.prepare(sql)) {
-           st.setInt(1, param);
-           // ...
-       }
-   }
-   ```
+### FEFO
 
-2. **Service.java** : Ajouter la logique métier avec gestion transactionnelle
-   ```java
-   public ResultType maFonction(params) throws Exception {
-       try {
-           // Logique + appels DAO
-           db.commit();
-           return result;
-       } catch (Exception e) {
-           db.rollback();
-           throw new Exception("Erreur : " + e.getMessage());
-       }
-   }
-   ```
+Les lots sont consommés dans l'ordre croissant de `DATEPEREMPTION`. `RESERVATION_STOCK` isole les quantités réservées sans toucher au stock physique — plusieurs commandes peuvent coexister sans conflit.
 
-3. **Menu.java** : Ajouter l'option dans le menu console
-   ```java
-   case X -> maFonction();
-   ```
+---
 
+## Modèle de données
+
+```
+PRODUCTEUR ──< PRODUIT >── CONDITIONNEMENT
+                                ├── VRAC  (PRIXVENTEVRAC, PRIXKGVRAC)
+                                └── PRECOND (PRIXVENTEP, POIDSFIXE)
+                 │
+                 ├──< LOT_PRODUIT ──< RESERVATION_STOCK
+                 └──< PERIODE_DISPONIBILITE >── PERIODE
+
+CLIENT ──< ADRESSE
+  │
+  └──< COMMANDE >──< LIGNE_COMMANDE >── PRODUIT (sentinel 999 = contenant)
+          │
+          ├── RETRAIT_BOUTIQUE
+          └── LIVRAISON_DOMICILE ──> ADRESSE
+
+CONTENANT ──< LOT_CONTENANT
+           ──< LIGNE_COMMANDE (via produit 999)
+
+PERTE ──< PRODUIT_PERDU  >── PRODUIT
+      └─< CONTENANT_PERDU >── CONTENANT
+```
+
+**Séquences Oracle :** `SEQ_COMMANDE`, `SEQ_RETRAIT_BOUTIQUE`, `SEQ_LIVRAISON_DOMICILE`.  
+`IDADRESSE` et `IDPERTE` utilisent `MAX(ID) + 1`.
+
+---
+
+## Tests
+
+Compiler d'abord :
+```bash
+mkdir -p out && javac -cp lib/ojdbc17.jar -d out src/*.java
+```
+
+> Les tests 7–12 et 15 utilisent des IDs créés dans les tests précédents.  
+> Remplacer `<ID_RETRAIT>`, `<ID_LIVRAISON>`, `<ID_NOUVEAU>`, `<ID_NOUVEAU2>` par les IDs affichés.
+
+---
+
+### TEST 1 — Catalogue
+```bash
+printf "1\n1\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : 20 produits avec stock numérique ou `rupture`.
+
+---
+
+### TEST 2 — Nouveau client + commande retrait EN BOUTIQUE
+```bash
+printf "1\n2\nO\n204\nO\nLefebvre\nAnne\nanne204@test.fr\n0611223344\n3 avenue Gambetta\nGrenoble\nFrance\nRETRAIT\nEN BOUTIQUE\n9\n2\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : commande créée, ID + montant. **Noter l'ID → `<ID_RETRAIT>`.**
+
+---
+
+### TEST 3 — Login par email
+```bash
+printf "1\n2\nN\nanne204@test.fr\nRETRAIT\nEN LIGNE\n9\n1\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : commande créée — valide que le `@` déclenche bien la recherche par email.
+
+---
+
+### TEST 4 — Produit sans saison (toujours dispo)
+```bash
+printf "1\n2\nN\n204\nRETRAIT\nEN LIGNE\n3\n2\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : commande créée. Produit 3 (Miel, 0 entrée dans `PERIODE_DISPONIBILITE`) passe sans rejet.
+
+---
+
+### TEST 5 — Rejet stock insuffisant
+```bash
+printf "1\n2\nN\n204\nRETRAIT\nEN LIGNE\n2\n999\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Erreur commande : Stock insuffisant pour produit 2`
+
+---
+
+### TEST 6 — Commande livraison domicile
+```bash
+printf "1\n2\nN\n204\nLIVRAISON\nEN LIGNE\n9\n1\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : commande créée, montant inclut les frais de livraison. **Noter l'ID → `<ID_LIVRAISON>`.**
+
+---
+
+### TEST 7 — Marquer Prête (déstockage réel)
+```bash
+printf "2\n2\n<ID_RETRAIT>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Commande passée en 'Prête'. Stock déduit.`
+
+---
+
+### TEST 8 — Clôturer retrait EN BOUTIQUE
+```bash
+printf "2\n3\n<ID_RETRAIT>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu :
+```
+Commande clôturée.
+Paiement EN BOUTIQUE enregistré.
+```
+
+---
+
+### TEST 9 — Clôturer livraison domicile
+```bash
+# Marquer Prête d'abord
+printf "2\n2\n<ID_LIVRAISON>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+# Puis clôturer
+printf "2\n3\n<ID_LIVRAISON>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Commande clôturée.` (sans message paiement boutique).
+
+---
+
+### TEST 10 — Annulation client (En preparation)
+```bash
+# Créer une commande
+printf "1\n2\nN\n204\nRETRAIT\nEN LIGNE\n9\n1\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+# Annuler → <ID_NOUVEAU>
+printf "1\n3\n<ID_NOUVEAU>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Commande annulée.`
+
+---
+
+### TEST 11 — Annulation client refusée (déjà clôturée)
+```bash
+printf "1\n3\n<ID_RETRAIT>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Erreur annulation : Annulation client autorisée uniquement en statut 'En preparation'.`
+
+---
+
+### TEST 12 — Double marquer Prête refusée
+```bash
+printf "2\n2\n<ID_RETRAIT>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Erreur : La commande n'est pas en préparation (statut : Recupere).`
+
+---
+
+### TEST 13 — F2 alertes péremption + ajustement prix
+```bash
+printf "2\n1\n10\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : liste des lots qui expirent dans 7 jours, puis `N produits ajustés.`
+
+---
+
+### TEST 14 — Enregistrer une perte
+```bash
+printf "2\n5\nvol\nP\n9\n0.5\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Perte enregistrée.`
+
+---
+
+### TEST 15 — Annulation épicier (En preparation)
+```bash
+# Créer une commande
+printf "1\n2\nN\n204\nRETRAIT\nEN LIGNE\n1\n5\n0\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+# Annuler côté épicier → <ID_NOUVEAU2>
+printf "2\n4\n<ID_NOUVEAU2>\n0\n0\n" | java -cp out:lib/ojdbc17.jar Main
+```
+Attendu : `Commande annulée.`
+
+---
+
+### TEST 16 — Concurrence (verrous pessimistes)
+
+Oracle tourne en **Read Committed** (niveau 1) par défaut. Le code ajoute des `SELECT ... FOR UPDATE` explicites sur `PRODUIT` pour sérialiser les F1 concurrents sur le même produit.
+
+Ouvrir **deux sessions SQLPlus** (ou deux feuilles SQL Developer avec `AUTOCOMMIT OFF`) :
+
+**Session 1** — prend le verrou et attend :
+```sql
+SELECT IDPRODUIT, NOMCOMMERCIAL FROM PRODUIT WHERE IDPRODUIT = 1 FOR UPDATE;
+-- ne pas committer
+```
+
+**Session 2** — immédiatement après :
+```sql
+SELECT IDPRODUIT, NOMCOMMERCIAL FROM PRODUIT WHERE IDPRODUIT = 1 FOR UPDATE;
+-- BLOQUE jusqu'au COMMIT de S1
+```
+
+Dans Session 1 :
+```sql
+COMMIT;
+```
+Attendu : Session 2 se débloque instantanément.
+
+---

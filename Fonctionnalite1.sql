@@ -1,88 +1,105 @@
--- -------------------------------------------------------------
--- ÉTAPE 1 : Configuration de la Transaction (ACID)
--- -------------------------------------------------------------
--- 1. Désactivation de l'autocommit pour garantir l'Atomicité.
-SET AUTOCOMMIT OFF;
+-- =============================================================
+-- FONCTIONNALITÉ 1 : PASSAGE D'UNE COMMANDE
+-- Deux transactions distinctes : réservation (T-A) puis déstockage (T-B).
+-- T-A crée la commande et réserve le stock sans le déduire.
+-- T-B (marquerCommandePrete) déduit le stock réel et passe en 'Prete'.
+-- =============================================================
 
--- 2. Niveau d'isolation SERIALIZABLE (Garantit l'Isolation contre la concurrence).
-SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
+-- =============================================================
+-- TRANSACTION A : RÉSERVATION (statut → 'En preparation')
+-- =============================================================
 
--- -------------------------------------------------------------
--- ÉTAPE 2 : Vérifications de Cohérence (Lues par la couche Service/DAO)
--- -------------------------------------------------------------
--- Si ces requêtes ne retournent pas le résultat attendu (Saison > 0 / Stock >= Quantité),
--- l'application DOIT annuler la transaction et ne pas exécuter les INSERT/UPDATE suivants.
-
--- 2.1. VÉRIFICATION DE LA SAISONNALITÉ
+-- 1. Vérification saisonnalité
+-- Un produit sans entrée dans PERIODE_DISPONIBILITE est disponible toute l'année.
+SELECT COUNT(*) FROM PERIODE_DISPONIBILITE WHERE IDPRODUIT = :idProduit;
+-- Si = 0 → toujours disponible, pas besoin de la requête ci-dessous.
+-- Sinon, vérifier qu'une période active couvre SYSDATE :
 SELECT COUNT(*)
 FROM PERIODE p
 JOIN PERIODE_DISPONIBILITE pd ON p.IDPERIODE = pd.IDPERIODE
-WHERE pd.IDPRODUIT = ID_PRODUIT_p 
+WHERE pd.IDPRODUIT = :idProduit
   AND SYSDATE BETWEEN p.DEBUTPERIODE AND p.FINPERIODE;
+-- Si = 0 → produit hors saison, ROLLBACK.
 
--- 2.2. VÉRIFICATION DU STOCK TOTAL SUFFISANT (Pré-vérification)
-SELECT SUM(QUANTITESTOCKLOT)
-FROM LOT_PRODUIT
-WHERE IDPRODUIT = ID_PRODUIT_p            
-  AND DATEPEREMPTION > SYSDATE
-HAVING SUM(QUANTITESTOCKLOT) >= QTE_COMMANDEE_p; 
+-- 2. Verrouillage du produit pour sérialiser les commandes concurrentes sur ce produit
+SELECT IDPRODUIT FROM PRODUIT WHERE IDPRODUIT = :idProduit FOR UPDATE;
 
--- -------------------------------------------------------------
--- ÉTAPE 3 : Création de l'En-tête de Commande
--- -------------------------------------------------------------
+-- 3. Stock disponible = stock total - quantités déjà réservées par d'autres commandes
+SELECT NVL(SUM(lp.QUANTITESTOCKLOT), 0) - NVL(
+    (SELECT SUM(rs.QUANTITE) FROM RESERVATION_STOCK rs
+     WHERE rs.IDLOTPRODUIT IN (
+         SELECT IDLOTPRODUIT FROM LOT_PRODUIT
+         WHERE IDPRODUIT = :idProduit AND DATEPEREMPTION > SYSDATE)), 0)
+FROM LOT_PRODUIT lp
+WHERE lp.IDPRODUIT = :idProduit AND lp.DATEPEREMPTION > SYSDATE;
+-- Si résultat < quantité demandée → ROLLBACK.
 
--- 3.1. Insertion de la COMMANDE (Génère l'ID via la séquence)
+-- 4. Création de la commande
 INSERT INTO COMMANDE
 (IDCOMMANDE, DATECOMMANDE, HEURECOMMANDE, STATUT, MODEPAIEMENT, IDCLIENT)
 VALUES (SEQ_COMMANDE.NEXTVAL, SYSDATE, TO_CHAR(SYSDATE,'HH24:MI:SS'),
-        'En preparation', :MODE_PAIEMENT, ID_CLIENT_p); 
+        'En preparation', :modePaiement, :idClient);
 
--- 3.2. Enregistrement du Mode de Récupération (Ex: Livraison Domicile)
--- Ceci utilise SEQ_COMMANDE.CURRVAL pour récupérer l'ID nouvellement créé.
-INSERT INTO LIVRAISON_DOMICILE(IDLIVRAISONDOMICILE, IDCOMMANDE, FRAISLIVRAISON, IDADRESSE)
-VALUES (SEQ_LIVRAISON_DOMICILE.NEXTVAL, SEQ_COMMANDE.CURRVAL, FRAIS_p, ID_ADRESSE_p);
+-- 5. Insertion d'une ligne de commande produit (répété pour chaque produit)
+INSERT INTO LIGNE_COMMANDE
+(IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
+VALUES (SEQ_COMMANDE.CURRVAL, :numLigne, :idProduit, :quantite, :unite, :prixUnitaire, :sousTotal);
 
--- 3.3. Mise à jour des Frais et Date de Livraison (Si mode = "Livraison")
+-- 6. Réservation FEFO : lots triés par péremption croissante, déduit des réservations existantes
+--    Exécuter pour chaque lot jusqu'à épuisement de la quantité demandée :
+SELECT lp.IDLOTPRODUIT,
+       lp.QUANTITESTOCKLOT - NVL(SUM(rs.QUANTITE), 0) AS DISPONIBLE
+FROM LOT_PRODUIT lp
+LEFT JOIN RESERVATION_STOCK rs ON lp.IDLOTPRODUIT = rs.IDLOTPRODUIT
+WHERE lp.IDPRODUIT = :idProduit AND lp.DATEPEREMPTION > SYSDATE
+GROUP BY lp.IDLOTPRODUIT, lp.QUANTITESTOCKLOT, lp.DATEPEREMPTION
+HAVING lp.QUANTITESTOCKLOT - NVL(SUM(rs.QUANTITE), 0) > 0
+ORDER BY lp.DATEPEREMPTION ASC;
+-- Pour chaque lot retourné, insérer dans RESERVATION_STOCK :
+INSERT INTO RESERVATION_STOCK (IDCOMMANDE, IDLOTPRODUIT, QUANTITE)
+VALUES (SEQ_COMMANDE.CURRVAL, :idLot, :quantiteReservee);
+
+-- 7. Mode de récupération : Retrait en boutique
+INSERT INTO RETRAIT_BOUTIQUE (IDRETRAITBOUTIQUE, IDCOMMANDE)
+VALUES (SEQ_RETRAIT_BOUTIQUE.NEXTVAL, SEQ_COMMANDE.CURRVAL);
+-- Ou livraison à domicile :
+INSERT INTO LIVRAISON_DOMICILE (IDLIVRAISONDOMICILE, IDCOMMANDE, FRAISLIVRAISON, IDADRESSE)
+VALUES (SEQ_LIVRAISON_DOMICILE.NEXTVAL, SEQ_COMMANDE.CURRVAL, 0, :idAdresse);
+-- Puis mise à jour des frais et date estimée (si livraison) :
 UPDATE LIVRAISON_DOMICILE
-SET FRAISLIVRAISON=:FRAIS_LIVRAISON, DATELIVRAISONESTIMEE=DATE_ESTIMEE
-WHERE IDCOMMANDE=SEQ_COMMANDE.CURRVAL;
+SET FRAISLIVRAISON = :fraisLivraison, DATELIVRAISONESTIMEE = :dateEstimee
+WHERE IDCOMMANDE = SEQ_COMMANDE.CURRVAL;
 
--- -------------------------------------------------------------
--- ÉTAPE 4 : Déstockage FEFO (Produit)
--- -------------------------------------------------------------
--- La clause AND QUANTITESTOCKLOT >= ? garantit que l'UPDATE échouera
--- si le stock est insuffisant.
+-- 8. Contenant optionnel : ligne technique produit 999 + décrément stock contenant
+INSERT INTO LIGNE_COMMANDE
+(IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
+VALUES (SEQ_COMMANDE.CURRVAL, :numLigneContenant, 999, 1, 'Unite', :prixContenant, :prixContenant);
+UPDATE CONTENANT SET STOCKDISPOCONTENANT = STOCKDISPOCONTENANT - 1
+WHERE IDCONTENANT = :idContenant AND STOCKDISPOCONTENANT >= 1;
 
--- 4.1. DÉSTOCKAGE Lot Produit N (Exécuté pour chaque lot consommé)
+COMMIT; -- libère le verrou sur PRODUIT, réservations visibles aux autres transactions
+
+
+-- =============================================================
+-- TRANSACTION B : PASSAGE EN PRÊTE (déstockage réel FEFO)
+-- =============================================================
+
+-- 1. Verrouillage de la commande (empêche une double transition concurrente)
+SELECT STATUT FROM COMMANDE WHERE IDCOMMANDE = :idCommande FOR UPDATE;
+-- Si STATUT <> 'En preparation' → ROLLBACK.
+
+-- 2. Déstockage depuis les réservations, verrouillage des lignes de réservation
+SELECT IDLOTPRODUIT, QUANTITE FROM RESERVATION_STOCK
+WHERE IDCOMMANDE = :idCommande FOR UPDATE;
+-- Pour chaque réservation retournée, déduire du lot (clause >= garantit la cohérence) :
 UPDATE LOT_PRODUIT
-SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - QTE_PRISE_LOT_N_p  
-WHERE IDLOTPRODUIT = ID_LOT_N_p                     
-  AND QUANTITESTOCKLOT >= QTE_PRISE_LOT_N_p;                
+SET QUANTITESTOCKLOT = QUANTITESTOCKLOT - :quantiteReservee
+WHERE IDLOTPRODUIT = :idLot AND QUANTITESTOCKLOT >= :quantiteReservee;
 
--- -------------------------------------------------------------
--- ÉTAPE 5 : Insertion des Lignes de Commande
--- -------------------------------------------------------------
+-- 3. Suppression des réservations
+DELETE FROM RESERVATION_STOCK WHERE IDCOMMANDE = :idCommande;
 
--- 5.1. Insertion de la LIGNE_COMMANDE du produit
-INSERT INTO LIGNE_COMMANDE
-(IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, IDCONTENANT,
- QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
-VALUES (SEQ_COMMANDE.CURRVAL, NUM_LIGNE_PRODUIT, ID_PRODUIT_p, NULL, 
-        QTE_COMMANDEE_LIGNE, UNITE_COMMANDEE, PRIX_UNITAIRE_PROD, SOUS_TOTAL_PRODUIT);
-
--- 5.2. DÉSTOCKAGE du Contenant (Pour chaque contenant)
-UPDATE CONTENANT
-SET STOCKDISPOCONTENANT = STOCKDISPOCONTENANT - 1
-WHERE IDCONTENANT = ID_CONTENANT_p                           
-  AND STOCKDISPOCONTENANT >= 1;                 
-
--- 5.3. Insertion de la LIGNE_COMMANDE du contenant (Pour chaque contenant)
-INSERT INTO LIGNE_COMMANDE
-(IDCOMMANDE, IDLIGNECOMMANDE, IDPRODUIT, IDCONTENANT,
- QUANTITECOMMANDE, UNITECOMMANDE, PRIXUNITAIRE, SOUSTOTAL)
-VALUES (SEQ_COMMANDE.CURRVAL, NUM_LIGNE_CONTENANT, NULL, ID_CONTENANT, 
-        1, 'Unite', PRIX_UNITAIRE_CONT, SOUS_TOTAL_CONTENANT);
+-- 4. Passage au statut Prête
+UPDATE COMMANDE SET STATUT = 'Prete' WHERE IDCOMMANDE = :idCommande;
 
 COMMIT;
-
--- ROLLBACK;
